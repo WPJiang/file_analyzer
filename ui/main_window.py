@@ -1209,6 +1209,11 @@ class MainWindow(QMainWindow):
         clear_history_action = QAction("清空历史分析", self)
         clear_history_action.triggered.connect(self.clear_analysis_history)
         tools_menu.addAction(clear_history_action)
+
+        # 清空历史分类结果
+        clear_classification_action = QAction("清空历史分类结果", self)
+        clear_classification_action.triggered.connect(self.clear_classification_results_history)
+        tools_menu.addAction(clear_classification_action)
         
         # 帮助菜单
         help_menu = menubar.addMenu("帮助(&H)")
@@ -2076,7 +2081,39 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "清空失败", "清空历史数据时出错，请查看控制台日志")
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"清空历史数据失败: {str(e)}")
-    
+
+    def clear_classification_results_history(self):
+        """清空历史分类结果"""
+        from database import FileStatus
+
+        reply = QMessageBox.question(
+            self,
+            "确认清空",
+            "确定要清空所有历史分类结果吗？\n这将删除所有文件的分类结果，但保留文件记录和语义块数据。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            try:
+                success = self.db_manager.clear_classification_results()
+                if success:
+                    QMessageBox.information(self, "清空成功", "所有历史分类结果已清空")
+                    self.statusbar.showMessage("分类结果已清空")
+                    # 清空分类面板
+                    self.classification_panel.set_classification_results({})
+                    # 清空文件表中的语义类别
+                    files = self.db_manager.get_files_by_status(FileStatus.PENDING)
+                    files.extend(self.db_manager.get_files_by_status(FileStatus.PARSED))
+                    files.extend(self.db_manager.get_files_by_status(FileStatus.PRELIMINARY))
+                    files.extend(self.db_manager.get_files_by_status(FileStatus.DEEP))
+                    for file_record in files:
+                        self.db_manager.update_file_semantic_categories(file_record.id, [])
+                else:
+                    QMessageBox.warning(self, "清空失败", "清空分类结果时出错，请查看控制台日志")
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"清空分类结果失败: {str(e)}")
+
     def show_about(self):
         """显示关于对话框"""
         QMessageBox.about(self, "关于",

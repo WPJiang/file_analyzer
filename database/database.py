@@ -955,7 +955,27 @@ class DatabaseManager:
             print(f"清空数据表失败: {e}")
             conn.rollback()
             return False
-    
+
+    def clear_classification_results(self) -> bool:
+        """清空分类结果表
+
+        Returns:
+            是否成功清空
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('DELETE FROM classification_results')
+            deleted_count = cursor.rowcount
+            conn.commit()
+            print(f"已清空分类结果表，删除 {deleted_count} 条记录")
+            return True
+        except Exception as e:
+            print(f"清空分类结果表失败: {e}")
+            conn.rollback()
+            return False
+
     # ==================== 用户查询表操作 ====================
     
     def add_user_query(self, query_text: str, query_vector: Optional[bytes] = None,
