@@ -1,0 +1,14 @@
+============================================================
+Block ID: 49ba8945ab36
+Type: image
+Page Number: 1
+File Path: d:\jiangweipeng\trae_code\file_analyzer\data_test_debug\教育部学籍在线验证报告_张美娜-学士.pdf
+Text Content: [Image 5 on page 1]
+Metadata: {
+  "source": "pymupdf",
+  "image_index": 4,
+  "image_ext": "png",
+  "width": 76,
+  "height": 50
+}
+============================================================
