@@ -111,6 +111,8 @@ Thumbs.db
 file_analyzer.db
 logs/
 cache/
+test_data/
+data_test_debug/
 *.db
 
 # Large files
