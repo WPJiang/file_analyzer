@@ -976,6 +976,37 @@ class DatabaseManager:
             conn.rollback()
             return False
 
+    def clear_all_data_except_categories(self) -> bool:
+        """清空除类别表外的所有数据表（保留类别体系）
+
+        Returns:
+            是否成功清空
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            # 清空数据表（按照外键依赖顺序，保留semantic_categories）
+            tables = [
+                'user_queries',
+                'classification_results',
+                'semantic_blocks',
+                'data_blocks',
+                'files',
+            ]
+
+            for table in tables:
+                cursor.execute(f'DELETE FROM {table}')
+                print(f"已清空表: {table}")
+
+            conn.commit()
+            print("已清空除类别表外的所有数据表")
+            return True
+        except Exception as e:
+            print(f"清空数据表失败: {e}")
+            conn.rollback()
+            return False
+
     # ==================== 用户查询表操作 ====================
     
     def add_user_query(self, query_text: str, query_vector: Optional[bytes] = None,

@@ -1210,6 +1210,11 @@ class MainWindow(QMainWindow):
         clear_history_action.triggered.connect(self.clear_analysis_history)
         tools_menu.addAction(clear_history_action)
 
+        # 清空历史分析(仅保留类别体系)
+        clear_history_keep_categories_action = QAction("清空历史分析(仅保留类别体系)", self)
+        clear_history_keep_categories_action.triggered.connect(self.clear_analysis_history_keep_categories)
+        tools_menu.addAction(clear_history_keep_categories_action)
+
         # 清空历史分类结果
         clear_classification_action = QAction("清空历史分类结果", self)
         clear_classification_action.triggered.connect(self.clear_classification_results_history)
@@ -2075,6 +2080,29 @@ class MainWindow(QMainWindow):
                 if success:
                     QMessageBox.information(self, "清空成功", "所有历史分析数据已清空")
                     self.statusbar.showMessage("历史数据已清空")
+                    # 清空分类面板
+                    self.classification_panel.set_classification_results({})
+                else:
+                    QMessageBox.warning(self, "清空失败", "清空历史数据时出错，请查看控制台日志")
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"清空历史数据失败: {str(e)}")
+
+    def clear_analysis_history_keep_categories(self):
+        """清空历史分析数据但保留类别体系"""
+        reply = QMessageBox.question(
+            self,
+            "确认清空",
+            "确定要清空历史分析数据吗？\n\n将删除：文件记录、数据块、语义块、分类结果\n将保留：类别体系",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            try:
+                success = self.db_manager.clear_all_data_except_categories()
+                if success:
+                    QMessageBox.information(self, "清空成功", "历史分析数据已清空，类别体系已保留")
+                    self.statusbar.showMessage("历史数据已清空（保留类别体系）")
                     # 清空分类面板
                     self.classification_panel.set_classification_results({})
                 else:
