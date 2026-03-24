@@ -82,7 +82,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-
+.claude/
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -111,7 +111,6 @@ Thumbs.db
 file_analyzer.db
 logs/
 cache/
-models/
 *.db
 
 # Large files
