@@ -1089,6 +1089,114 @@ class ImageMetadataWorker(QThread):
             self.error.emit(f"图片元数据分析失败: {str(e)}")
 
 
+class ImageCaptionWorker(QThread):
+    """图片Caption和标签生成工作线程"""
+    progress = pyqtSignal(str, int, int)  # message, current, total
+    finished = pyqtSignal(dict)  # result
+    error = pyqtSignal(str)
+
+    def __init__(self, db_manager, file_ids: List[int] = None):
+        super().__init__()
+        self.db_manager = db_manager
+        self.file_ids = file_ids
+        self._is_cancelled = False
+
+    def cancel(self):
+        """取消分析"""
+        self._is_cancelled = True
+
+    def run(self):
+        """执行图片Caption和标签生成"""
+        try:
+            from semantic_representation.image_caption_tagger import ImageCaptionTagger
+            from models.model_manager import is_llm_available, get_llm_client
+
+            # 检查LLM服务
+            if not is_llm_available():
+                self.error.emit("LLM服务不可用，请确保本地LLM服务已启动")
+                return
+
+            # 获取LLM客户端
+            llm_client = get_llm_client()
+            tagger = ImageCaptionTagger(llm_client)
+
+            # 获取待处理的图片文件
+            if self.file_ids:
+                files = []
+                for file_id in self.file_ids:
+                    record = self.db_manager.get_file_by_id(file_id)
+                    if record:
+                        files.append(record)
+            else:
+                files = self.db_manager.get_files_by_type('image')
+
+            total = len(files)
+            if total == 0:
+                self.finished.emit({'processed': 0, 'updated': 0, 'errors': 0})
+                return
+
+            self.progress.emit(f"开始生成 {total} 个图片的Caption和标签...", 0, total)
+
+            processed = 0
+            updated = 0
+            errors = 0
+            updates = []
+
+            for file_record in files:
+                if self._is_cancelled:
+                    break
+
+                processed += 1
+                file_path = file_record.file_path
+
+                try:
+                    # 生成Caption和标签
+                    result = tagger.generate_caption_and_tags(file_path)
+
+                    if result.get('success'):
+                        # 获取现有元数据
+                        existing_metadata = file_record.metadata or {}
+                        # 添加Caption和标签
+                        existing_metadata['caption'] = result.get('caption')
+                        existing_metadata['tags'] = result.get('tags', [])
+
+                        updates.append((file_record.id, existing_metadata))
+                        updated += 1
+                    else:
+                        errors += 1
+                        print(f"[ImageCaptionWorker] 生成失败: {file_path}, 错误: {result.get('error')}")
+
+                    # 更新进度
+                    if processed % 5 == 0 or processed == total:
+                        self.progress.emit(
+                            f"已处理 {processed}/{total} 个文件，成功 {updated} 个",
+                            processed, total
+                        )
+
+                except Exception as e:
+                    errors += 1
+                    print(f"[ImageCaptionWorker] 处理文件失败: {file_path}, 错误: {e}")
+
+            # 批量更新数据库
+            if updates:
+                self.db_manager.update_file_metadata_batch(updates)
+
+            result = {
+                'processed': processed,
+                'updated': updated,
+                'errors': errors,
+                'cancelled': self._is_cancelled
+            }
+
+            self.progress.emit(f"完成: 处理 {processed} 个，成功 {updated} 个", total, total)
+            self.finished.emit(result)
+
+        except Exception as e:
+            import traceback
+            print(f"[ImageCaptionWorker] 分析失败: {e}\n{traceback.format_exc()}")
+            self.error.emit(f"图片Caption生成失败: {str(e)}")
+
+
 class MainWindow(QMainWindow):
     """主窗口类"""
     
@@ -1129,6 +1237,7 @@ class MainWindow(QMainWindow):
         self.semantic_represent_worker = None
         self._generate_category_worker = None
         self._image_metadata_worker = None
+        self._image_caption_worker = None
         self._pending_category_system_name = None
         self._pending_category_list = None
         self.config = self._load_config()
@@ -1402,6 +1511,12 @@ class MainWindow(QMainWindow):
         image_metadata_action.triggered.connect(self.analyze_image_metadata)
         tools_menu.addAction(image_metadata_action)
 
+        # 图片Caption和标签生成
+        image_caption_action = QAction("图片Caption和标签生成", self)
+        image_caption_action.setToolTip("使用LLM为图片生成描述和标签")
+        image_caption_action.triggered.connect(self.analyze_image_caption)
+        tools_menu.addAction(image_caption_action)
+
         tools_menu.addSeparator()
 
         # 设置
@@ -1590,7 +1705,14 @@ class MainWindow(QMainWindow):
     def on_file_selected(self, file_path: str):
         """文件选中回调"""
         self.selected_label.setText(f"选中: {os.path.basename(file_path)}")
-        self.preview_panel.preview_file(file_path)
+
+        # 获取文件元数据
+        metadata = None
+        file_record = self.db_manager.get_file_by_path(file_path)
+        if file_record and file_record.metadata:
+            metadata = file_record.metadata
+
+        self.preview_panel.preview_file(file_path, metadata)
     
     def on_search(self, query: str):
         """搜索回调 - 使用语义搜索"""
@@ -2209,6 +2331,102 @@ class MainWindow(QMainWindow):
         self.statusbar.showMessage(f"图片元数据分析失败: {error_msg}")
         QMessageBox.warning(self, "分析失败", error_msg)
         self._image_metadata_worker = None
+
+    def analyze_image_caption(self):
+        """分析图片Caption和标签"""
+        from models.model_manager import is_llm_available
+
+        # 检查LLM服务
+        if not is_llm_available():
+            QMessageBox.warning(
+                self, "服务不可用",
+                "LLM服务不可用。\n\n"
+                "请确保本地LLM服务已启动（如llama-server.exe）。\n"
+                "可在设置中检查LLM配置。"
+            )
+            return
+
+        # 检查是否有图片文件
+        image_files = self.db_manager.get_files_by_type('image')
+
+        if not image_files:
+            QMessageBox.information(
+                self, "提示",
+                "数据库中没有图片文件。\n请先扫描并解析包含图片的目录。"
+            )
+            return
+
+        reply = QMessageBox.question(
+            self, "图片Caption和标签生成",
+            f"将对 {len(image_files)} 个图片文件生成Caption和标签。\n\n"
+            "将生成以下内容：\n"
+            "• Caption: 图片内容描述（30字以内）\n"
+            "• Tags: 图片标签（3-5个）\n\n"
+            "注意：\n"
+            "1. 此功能需要LLM支持图片输入（如llava模型）\n"
+            "2. 处理时间较长，请耐心等待\n\n"
+            "是否继续？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        # 禁用重复操作
+        if self._image_caption_worker and self._image_caption_worker.isRunning():
+            QMessageBox.warning(self, "提示", "图片Caption生成正在进行中...")
+            return
+
+        # 启动工作线程
+        self._image_caption_worker = ImageCaptionWorker(self.db_manager)
+        self._image_caption_worker.progress.connect(self._on_image_caption_progress)
+        self._image_caption_worker.finished.connect(self._on_image_caption_finished)
+        self._image_caption_worker.error.connect(self._on_image_caption_error)
+        self._image_caption_worker.start()
+
+        self.statusbar.showMessage("正在生成图片Caption和标签...")
+        QApplication.processEvents()
+
+    def _on_image_caption_progress(self, message: str, current: int, total: int):
+        """图片Caption生成进度回调"""
+        self.statusbar.showMessage(message)
+
+    def _on_image_caption_finished(self, result: dict):
+        """图片Caption生成完成回调"""
+        processed = result.get('processed', 0)
+        updated = result.get('updated', 0)
+        errors = result.get('errors', 0)
+        cancelled = result.get('cancelled', False)
+
+        if cancelled:
+            self.statusbar.showMessage("图片Caption生成已取消")
+            QMessageBox.information(
+                self, "生成取消",
+                f"图片Caption生成已取消。\n"
+                f"已处理: {processed} 个文件\n"
+                f"已更新: {updated} 个文件"
+            )
+        else:
+            self.statusbar.showMessage(
+                f"图片Caption生成完成: 处理 {processed} 个，成功 {updated} 个"
+            )
+            QMessageBox.information(
+                self, "生成完成",
+                f"图片Caption和标签生成完成！\n\n"
+                f"处理文件: {processed} 个\n"
+                f"成功生成: {updated} 个\n"
+                f"处理错误: {errors} 个"
+            )
+
+        # 清理工作线程
+        self._image_caption_worker = None
+
+    def _on_image_caption_error(self, error_msg: str):
+        """图片Caption生成错误回调"""
+        self.statusbar.showMessage(f"图片Caption生成失败: {error_msg}")
+        QMessageBox.warning(self, "生成失败", error_msg)
+        self._image_caption_worker = None
 
     def auto_get_categories_from_directory(self):
         """从当前目录结构自动获取分类类别

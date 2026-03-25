@@ -936,12 +936,13 @@ class PreviewWorker(QThread):
 
 class PreviewPanel(QWidget):
     """预览窗口组件"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_file = None
+        self.current_metadata = None
         self.preview_worker = None
-        
+
         self.init_ui()
     
     def init_ui(self):
@@ -1046,26 +1047,53 @@ class PreviewPanel(QWidget):
         """创建图片预览页面"""
         page = QWidget()
         layout = QVBoxLayout(page)
-        
+
         # 滚动区域
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setAlignment(Qt.AlignCenter)
-        
+
         # 图片标签
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setStyleSheet("background-color: #f5f5f5;")
-        
+
         scroll.setWidget(self.image_label)
         layout.addWidget(scroll)
-        
+
         # 图片信息
         self.image_info_label = QLabel("")
         self.image_info_label.setAlignment(Qt.AlignCenter)
         self.image_info_label.setStyleSheet("color: #666; padding: 5px;")
         layout.addWidget(self.image_info_label)
-        
+
+        # Caption标签
+        self.image_caption_label = QLabel("")
+        self.image_caption_label.setAlignment(Qt.AlignCenter)
+        self.image_caption_label.setStyleSheet("""
+            color: #333;
+            padding: 5px;
+            font-size: 13px;
+            background-color: #f0f8ff;
+            border-radius: 4px;
+            margin: 2px;
+        """)
+        self.image_caption_label.setWordWrap(True)
+        self.image_caption_label.hide()
+        layout.addWidget(self.image_caption_label)
+
+        # Tags标签
+        self.image_tags_label = QLabel("")
+        self.image_tags_label.setAlignment(Qt.AlignCenter)
+        self.image_tags_label.setStyleSheet("""
+            color: #2196F3;
+            padding: 5px;
+            font-size: 12px;
+        """)
+        self.image_tags_label.setWordWrap(True)
+        self.image_tags_label.hide()
+        layout.addWidget(self.image_tags_label)
+
         return page
     
     def create_text_page(self) -> QWidget:
@@ -1188,27 +1216,33 @@ class PreviewPanel(QWidget):
         
         return page
     
-    def preview_file(self, file_path: str):
-        """预览文件"""
+    def preview_file(self, file_path: str, metadata: dict = None):
+        """预览文件
+
+        Args:
+            file_path: 文件路径
+            metadata: 文件元数据（包含caption、tags等）
+        """
         if not file_path or not os.path.exists(file_path):
             self.stack.setCurrentIndex(0)  # 空白页面
             return
-        
+
         self.current_file = file_path
-        
+        self.current_metadata = metadata
+
         # 更新文件信息
         file_name = os.path.basename(file_path)
         file_size = os.path.getsize(file_path)
         size_str = self.format_size(file_size)
         self.file_info_label.setText(f"{file_name} ({size_str})")
-        
+
         # 显示加载页面
         self.stack.setCurrentIndex(9)  # 加载中页面
-        
+
         # 启动后台加载
         if self.preview_worker and self.preview_worker.isRunning():
             self.preview_worker.wait()
-        
+
         self.preview_worker = PreviewWorker(file_path)
         self.preview_worker.preview_ready.connect(self.on_preview_ready)
         self.preview_worker.preview_error.connect(self.on_preview_error)
@@ -1245,12 +1279,45 @@ class PreviewPanel(QWidget):
         # 缩放图片以适应窗口
         max_size = 800
         if pixmap.width() > max_size or pixmap.height() > max_size:
-            pixmap = pixmap.scaled(max_size, max_size, 
-                                  Qt.KeepAspectRatio, 
+            pixmap = pixmap.scaled(max_size, max_size,
+                                  Qt.KeepAspectRatio,
                                   Qt.SmoothTransformation)
-        
+
         self.image_label.setPixmap(pixmap)
-        self.image_info_label.setText(f"{pixmap.width()} x {pixmap.height()} px")
+
+        # 构建信息文本
+        info_parts = [f"{pixmap.width()} x {pixmap.height()} px"]
+
+        # 添加元数据信息
+        if hasattr(self, 'current_metadata') and self.current_metadata:
+            metadata = self.current_metadata
+            # 拍摄时间
+            if metadata.get('capture_time_extracted'):
+                info_parts.append(f"拍摄: {metadata['capture_time_extracted']}")
+            elif metadata.get('capture_time_from_filename'):
+                info_parts.append(f"时间: {metadata['capture_time_from_filename']}")
+            # 地点
+            if metadata.get('location_info'):
+                info_parts.append(f"地点: {metadata['location_info']}")
+
+        self.image_info_label.setText(" | ".join(info_parts))
+
+        # 显示Caption
+        if hasattr(self, 'current_metadata') and self.current_metadata and self.current_metadata.get('caption'):
+            self.image_caption_label.setText(f"📷 {self.current_metadata['caption']}")
+            self.image_caption_label.show()
+        else:
+            self.image_caption_label.hide()
+
+        # 显示Tags
+        if hasattr(self, 'current_metadata') and self.current_metadata and self.current_metadata.get('tags'):
+            tags = self.current_metadata['tags']
+            tags_text = " ".join([f"#{tag}" for tag in tags if tag])
+            self.image_tags_label.setText(f"🏷️ {tags_text}")
+            self.image_tags_label.show()
+        else:
+            self.image_tags_label.hide()
+
         self.stack.setCurrentIndex(1)  # 图片页面
     
     def show_text_preview(self, content: str):
