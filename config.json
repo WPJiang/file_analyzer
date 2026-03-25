@@ -1,5 +1,5 @@
 {
-    "initial_directory": "D:/张美娜-公务员-2025",
+    "initial_directory": "D:/张美娜找工作-2026",
     "low_memory_mode": {
         "enabled": true,
         "description": "低内存设备优化模式。启用后会降低内存占用但可能增加处理时间。适用于内存≤8GB的设备。启用后建议: 1)embedding.model_name改为L6版本 2)ocr_max_image_width降至1000 3)enable_mkldnn设为false",
@@ -469,8 +469,8 @@
         }
     },
     "llm": {
-        "type": "cloud",
-        "description": "LLM类型: 'cloud'使用云侧大模型, 'ollama'使用本地Ollama服务。默认使用云侧模型",
+        "type": "local_llama",
+        "description": "LLM类型: 'cloud'使用云侧大模型, 'ollama'使用本地Ollama服务, 'local_llama'使用本地llama.cpp服务器。默认使用本地llama.cpp服务器",
         "cloud": {
             "api_key": "54d9b6b997a44211b21c05a7f63b0889.cqkGpYlP3CmIJ209",
             "description_api_key": "云侧API密钥。可留空使用环境变量OPENAI_API_KEY 54d9b6b997a44211b21c05a7f63b0889.cqkGpYlP3CmIJ209 sk-sp-03303623ef904ed99937322dedb9ea11",
@@ -494,6 +494,18 @@
             "description_model": "Ollama模型名称",
             "keep_alive": "10m",
             "description_keep_alive": "模型在内存中保持的时间，避免每次调用重新加载"
+        },
+        "local_llama": {
+            "base_url": "http://127.0.0.1:11435/v1",
+            "description_base_url": "本地llama.cpp服务器地址。通过llama-server.exe启动，例如: ./llama-server.exe -m model.gguf -c 2048 --host 0.0.0.0 --port 11435",
+            "model": "qwen3.5-0.8b",
+            "description_model": "模型名称，与启动时指定的模型对应",
+            "timeout": 300,
+            "description_timeout": "API调用超时时间（秒），本地模型可能较慢",
+            "max_tokens": 2048,
+            "description_max_tokens": "最大生成token数",
+            "temperature": 0.7,
+            "description_temperature": "生成温度，0-1之间，越高越随机"
         }
     }
 }

@@ -801,6 +801,31 @@ class DatabaseManager:
 
         return result
 
+    def delete_category_system(self, category_system_name: str) -> bool:
+        """删除指定的类别体系
+
+        Args:
+            category_system_name: 类别体系名称
+
+        Returns:
+            是否删除成功
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            # 删除该类别体系下的所有类别
+            cursor.execute('DELETE FROM semantic_categories WHERE category_system_name = ?',
+                          (category_system_name,))
+            deleted_count = cursor.rowcount
+            conn.commit()
+            print(f"已删除类别体系 '{category_system_name}'，共删除 {deleted_count} 个类别")
+            return True
+        except Exception as e:
+            print(f"删除类别体系失败: {e}")
+            conn.rollback()
+            return False
+
     def _row_to_semantic_category_record(self, row: sqlite3.Row) -> SemanticCategoryRecord:
         """将数据库行转换为SemanticCategoryRecord"""
         return SemanticCategoryRecord(

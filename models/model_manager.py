@@ -57,9 +57,9 @@ class ModelManager:
         self._jieba_initialized = False
         self._config = None  # 配置缓存
 
-        # LLM客户端 (统一接口，支持Ollama和云侧模型)
+        # LLM客户端 (统一接口，支持Ollama、云侧模型和本地llama.cpp)
         self._llm_client = None
-        self._llm_type = None  # 'ollama' 或 'cloud'
+        self._llm_type = None  # 'ollama', 'cloud', 或 'local_llama'
         self._llm_initialized = False
 
         # 模型锁
@@ -507,11 +507,11 @@ class ModelManager:
     def get_llm_client(self):
         """获取LLM客户端实例（统一接口）
 
-        根据配置文件中的llm.type决定使用云侧模型还是Ollama。
-        默认使用云侧模型。
+        根据配置文件中的llm.type决定使用云侧模型、Ollama还是本地llama.cpp。
+        默认使用本地llama.cpp模型。
 
         Returns:
-            LLM客户端实例（OllamaClient或CloudLLMClient）
+            LLM客户端实例（OllamaClient、CloudLLMClient或LocalLlamaClient）
         """
         if self._llm_initialized and self._llm_client is not None:
             return self._llm_client
@@ -524,11 +524,14 @@ class ModelManager:
             # 从配置获取LLM类型
             config = self._load_config()
             llm_config = config.get('llm', {})
-            llm_type = llm_config.get('type', 'cloud')
+            llm_type = llm_config.get('type', 'local_llama')
 
             if llm_type == 'ollama':
                 # 使用Ollama本地模型
                 self._init_ollama_client(llm_config.get('ollama', {}))
+            elif llm_type == 'local_llama':
+                # 使用本地llama.cpp服务器
+                self._init_local_llama_client(llm_config.get('local_llama', {}))
             else:
                 # 默认使用云侧模型
                 self._init_cloud_llm_client(llm_config.get('cloud', {}))
@@ -569,6 +572,21 @@ class ModelManager:
             self._llm_client = None
         except Exception as e:
             print(f"[ModelManager] ERROR: 云侧LLM客户端初始化失败: {e}")
+            self._llm_client = None
+
+    def _init_local_llama_client(self, local_llama_config: Dict):
+        """初始化本地llama.cpp客户端"""
+        try:
+            from models.local_llama_client import LocalLlamaClient
+
+            self._llm_client = LocalLlamaClient(config=local_llama_config)
+            print(f"[ModelManager] 本地llama.cpp客户端初始化完成")
+
+        except ImportError as e:
+            print(f"[ModelManager] WARNING: 无法导入LocalLlamaClient: {e}")
+            self._llm_client = None
+        except Exception as e:
+            print(f"[ModelManager] ERROR: 本地llama.cpp客户端初始化失败: {e}")
             self._llm_client = None
 
     def get_ollama_client(self, base_url: str = "http://localhost:11434", model: str = "qwen3.5:0.8b"):
@@ -725,7 +743,7 @@ class ModelManager:
         """获取当前LLM类型
 
         Returns:
-            'cloud' 或 'ollama'
+            'cloud', 'ollama' 或 'local_llama'
         """
         return self._llm_type or 'unknown'
 

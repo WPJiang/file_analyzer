@@ -2069,19 +2069,23 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "确认清空",
-            "确定要清空所有历史分析数据吗？\n这将删除所有文件记录、数据块、语义块和分类结果。",
+            "确定要清空所有历史分析数据吗？\n这将删除所有文件记录、数据块、语义块、分类结果和类别体系。",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
-        
+
         if reply == QMessageBox.Yes:
             try:
                 success = self.db_manager.clear_all_data()
                 if success:
                     QMessageBox.information(self, "清空成功", "所有历史分析数据已清空")
                     self.statusbar.showMessage("历史数据已清空")
-                    # 清空分类面板
+                    # 清空分类面板的分类结果
                     self.classification_panel.set_classification_results({})
+                    # 清空分类面板的类别体系
+                    self.classification_panel.clear_category_systems()
+                    # 从配置文件重新加载默认类别体系
+                    self._load_category_systems_from_config()
                 else:
                     QMessageBox.warning(self, "清空失败", "清空历史数据时出错，请查看控制台日志")
             except Exception as e:

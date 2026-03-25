@@ -313,6 +313,13 @@ class ClassificationPanel(QWidget):
                 self.category_system_changed.emit(self.current_system)
             self.update_category_system_tree()
 
+    def clear_category_systems(self):
+        """清空所有类别体系"""
+        self.category_systems.clear()
+        self.current_system = None
+        self.category_system_changed.emit(None)
+        self.update_category_system_tree()
+
     def get_category_system(self, name: str) -> Optional[CategorySystem]:
         """获取指定的类别体系"""
         return self.category_systems.get(name)
@@ -462,7 +469,11 @@ class ClassificationPanel(QWidget):
         )
 
         if reply == QMessageBox.Yes:
+            # 先从内存中删除
             self.remove_category_system(name)
+            # 再从数据库中删除
+            if self.db_manager:
+                self.db_manager.delete_category_system(name)
 
     # ==================== 模式切换 ====================
 
