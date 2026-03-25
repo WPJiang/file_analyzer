@@ -1,5 +1,7 @@
 import os
 import io
+import tempfile
+import zipfile
 from typing import Optional, List
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit,
@@ -9,6 +11,21 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QPixmap, QImage, QFont, QTextCursor
+
+# 导入 PIL 用于更多图片格式支持
+try:
+    from PIL import Image
+    PIL_SUPPORT = True
+except ImportError:
+    PIL_SUPPORT = False
+
+# 尝试导入 pillow-heif 用于 HEIC/HEIF 格式支持
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+    HEIF_SUPPORT = True
+except ImportError:
+    HEIF_SUPPORT = False
 
 # 导入文档处理库
 try:
@@ -725,23 +742,29 @@ class PreviewWorker(QThread):
     """预览加载工作线程"""
     preview_ready = pyqtSignal(object, str)
     preview_error = pyqtSignal(str)
-    
+
     def __init__(self, file_path: str):
         super().__init__()
         self.file_path = file_path
-    
+
     def run(self):
         try:
             ext = os.path.splitext(self.file_path)[1].lower()
-            
+
             # 图片文件
-            if ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp']:
+            if ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.ico']:
+                self._load_standard_image()
+            elif ext == '.svg':
+                # SVG 尝试用 QPixmap 加载，可能失败
                 pixmap = QPixmap(self.file_path)
                 if not pixmap.isNull():
                     self.preview_ready.emit(pixmap, 'image')
                 else:
-                    self.preview_error.emit("无法加载图片")
-            
+                    self.preview_error.emit("SVG 格式需要额外支持，请使用外部程序打开")
+            elif ext in ['.heic', '.heif']:
+                self._load_heic_image()
+            elif ext == '.livp':
+                self._load_livp_image()
             # 文本文件
             elif ext in ['.txt', '.md', '.py', '.json', '.xml', '.html', '.css', '.js']:
                 try:
@@ -750,37 +773,165 @@ class PreviewWorker(QThread):
                     self.preview_ready.emit(content, 'text')
                 except Exception as e:
                     self.preview_error.emit(f"无法读取文本: {str(e)}")
-            
             # PDF文件
             elif ext == '.pdf':
                 self.preview_ready.emit(self.file_path, 'pdf')
-            
             # Word文档
             elif ext in ['.doc', '.docx']:
                 self.preview_ready.emit(self.file_path, 'word')
-            
             # Excel文档
             elif ext in ['.xls', '.xlsx']:
                 self.preview_ready.emit(self.file_path, 'excel')
-            
             # PowerPoint文档
             elif ext in ['.ppt', '.pptx']:
                 self.preview_ready.emit(self.file_path, 'ppt')
-            
             # 音频文件
             elif ext in ['.mp3', '.wav', '.m4a', '.flac']:
                 self.preview_ready.emit(self.file_path, 'audio')
-            
             # 快捷方式文件
             elif ext == '.lnk':
                 self.preview_ready.emit(self.file_path, 'shortcut')
-            
             # 其他文件
             else:
                 self.preview_ready.emit(self.file_path, 'unsupported')
-        
+
         except Exception as e:
             self.preview_error.emit(str(e))
+
+    def _load_standard_image(self):
+        """加载标准图片格式"""
+        pixmap = QPixmap(self.file_path)
+        if not pixmap.isNull():
+            self.preview_ready.emit(pixmap, 'image')
+        else:
+            # 尝试用 PIL 加载
+            if PIL_SUPPORT:
+                try:
+                    img = Image.open(self.file_path)
+                    # 转换为 RGB 模式（如果是 RGBA 则保留）
+                    if img.mode not in ('RGB', 'RGBA'):
+                        img = img.convert('RGB')
+                    # 转换为 QPixmap
+                    data = img.tobytes('raw', img.mode)
+                    qimage = QImage(data, img.width, img.height,
+                                   QImage.Format_RGB888 if img.mode == 'RGB' else QImage.Format_RGBA8888)
+                    pixmap = QPixmap.fromImage(qimage)
+                    if not pixmap.isNull():
+                        self.preview_ready.emit(pixmap, 'image')
+                        return
+                except Exception as e:
+                    pass
+            self.preview_error.emit("无法加载图片")
+
+    def _load_heic_image(self):
+        """加载 HEIC/HEIF 格式图片"""
+        # 首先尝试用 QPixmap 加载
+        pixmap = QPixmap(self.file_path)
+        if not pixmap.isNull():
+            self.preview_ready.emit(pixmap, 'image')
+            return
+
+        # 使用 PIL 加载（需要 pillow-heif）
+        if PIL_SUPPORT:
+            try:
+                img = Image.open(self.file_path)
+                if img.mode not in ('RGB', 'RGBA'):
+                    img = img.convert('RGB')
+                data = img.tobytes('raw', img.mode)
+                qimage = QImage(data, img.width, img.height,
+                               QImage.Format_RGB888 if img.mode == 'RGB' else QImage.Format_RGBA8888)
+                pixmap = QPixmap.fromImage(qimage)
+                if not pixmap.isNull():
+                    self.preview_ready.emit(pixmap, 'image')
+                    return
+            except Exception as e:
+                if not HEIF_SUPPORT:
+                    self.preview_error.emit("HEIC 格式需要安装 pillow-heif 库\n请运行: pip install pillow-heif")
+                    return
+                self.preview_error.emit(f"无法加载 HEIC 图片: {str(e)}")
+                return
+
+        if not HEIF_SUPPORT:
+            self.preview_error.emit("HEIC 格式需要安装 pillow-heif 库\n请运行: pip install pillow-heif")
+        else:
+            self.preview_error.emit("无法加载 HEIC 图片")
+
+    def _load_livp_image(self):
+        """加载 Live Photo (.livp) 格式
+
+        Live Photo 是 Apple 的格式，包含一张静态图片和一个短视频。
+        文件实际上是一个 ZIP 压缩包，我们需要提取其中的静态图片进行预览。
+        """
+        try:
+            # 检查是否是 ZIP 文件
+            if not zipfile.is_zipfile(self.file_path):
+                self.preview_error.emit("无效的 Live Photo 文件格式")
+                return
+
+            with zipfile.ZipFile(self.file_path, 'r') as zf:
+                # 列出压缩包中的文件
+                file_list = zf.namelist()
+
+                # 查找图片文件（通常是 HEIC 或 JPEG）
+                image_extensions = ['.heic', '.heif', '.jpg', '.jpeg', '.png']
+                image_file = None
+
+                for f in file_list:
+                    ext = os.path.splitext(f)[1].lower()
+                    if ext in image_extensions:
+                        image_file = f
+                        break
+
+                if not image_file:
+                    self.preview_error.emit("Live Photo 中未找到图片文件")
+                    return
+
+                # 提取图片到临时文件
+                with tempfile.NamedTemporaryFile(suffix=os.path.splitext(image_file)[1], delete=False) as tmp:
+                    tmp.write(zf.read(image_file))
+                    tmp_path = tmp.name
+
+                try:
+                    # 尝试加载提取的图片
+                    if image_file.lower().endswith(('.heic', '.heif')):
+                        # HEIC 格式
+                        if PIL_SUPPORT:
+                            try:
+                                img = Image.open(tmp_path)
+                                if img.mode not in ('RGB', 'RGBA'):
+                                    img = img.convert('RGB')
+                                data = img.tobytes('raw', img.mode)
+                                qimage = QImage(data, img.width, img.height,
+                                               QImage.Format_RGB888 if img.mode == 'RGB' else QImage.Format_RGBA8888)
+                                pixmap = QPixmap.fromImage(qimage)
+                                if not pixmap.isNull():
+                                    self.preview_ready.emit(pixmap, 'image')
+                                    return
+                            except Exception as e:
+                                print(f"[PreviewWorker] HEIC 加载失败: {e}")
+
+                        if not HEIF_SUPPORT:
+                            self.preview_error.emit("Live Photo 中的 HEIC 图片需要安装 pillow-heif 库")
+                            return
+                    else:
+                        # 标准图片格式
+                        pixmap = QPixmap(tmp_path)
+                        if not pixmap.isNull():
+                            self.preview_ready.emit(pixmap, 'image')
+                            return
+
+                    self.preview_error.emit("无法加载 Live Photo 中的图片")
+                finally:
+                    # 清理临时文件
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
+
+        except zipfile.BadZipFile:
+            self.preview_error.emit("无效的 Live Photo 文件（不是有效的 ZIP 格式）")
+        except Exception as e:
+            self.preview_error.emit(f"加载 Live Photo 失败: {str(e)}")
 
 
 class PreviewPanel(QWidget):

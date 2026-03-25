@@ -1,7 +1,7 @@
 import os
 import sqlite3
 import json
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime
 from enum import IntEnum
@@ -30,6 +30,7 @@ class FileRecord:
     directory_path: str
     added_time: datetime
     semantic_filename: Optional[str] = None  # 语义文件名（用于搜索）
+    metadata: Optional[Dict[str, Any]] = None  # 文件元数据（拍摄时间、地点等）
 
 
 @dataclass
@@ -136,7 +137,8 @@ class DatabaseManager:
                 semantic_categories TEXT,  -- JSON格式存储
                 directory_path TEXT NOT NULL,
                 added_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                semantic_filename TEXT  -- 语义文件名（用于搜索）
+                semantic_filename TEXT,  -- 语义文件名（用于搜索）
+                metadata TEXT  -- 文件元数据（JSON格式，包含拍摄时间、地点等）
             )
         ''')
         
@@ -335,16 +337,38 @@ class DatabaseManager:
         """获取目录下的所有文件"""
         conn = self._get_connection()
         cursor = conn.cursor()
-        
+
         cursor.execute('''
-            SELECT * FROM files 
+            SELECT * FROM files
             WHERE directory_path = ?
             ORDER BY added_time
         ''', (directory_path,))
-        
+
         rows = cursor.fetchall()
         return [self._row_to_file_record(row) for row in rows]
-    
+
+    def get_files_by_type(self, file_type: str) -> List[FileRecord]:
+        """根据文件类型获取文件列表
+
+        Args:
+            file_type: 文件类型，如 'image', 'pdf', 'document' 等
+
+        Returns:
+            文件记录列表
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # 使用 LIKE 匹配，因为 file_type 可能存储为 'image/jpeg' 等格式
+        cursor.execute('''
+            SELECT * FROM files
+            WHERE file_type LIKE ?
+            ORDER BY added_time
+        ''', (f'{file_type}%',))
+
+        rows = cursor.fetchall()
+        return [self._row_to_file_record(row) for row in rows]
+
     def update_file_status(self, file_id: int, status: FileStatus) -> bool:
         """更新文件分析状态"""
         conn = self._get_connection()
@@ -398,7 +422,57 @@ class DatabaseManager:
         except Exception as e:
             print(f"更新文件语义文件名失败: {e}")
             return False
-    
+
+    def update_file_metadata(self, file_id: int, metadata: Dict[str, Any]) -> bool:
+        """更新文件元数据
+
+        Args:
+            file_id: 文件ID
+            metadata: 元数据字典
+
+        Returns:
+            是否更新成功
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                UPDATE files SET metadata = ? WHERE id = ?
+            ''', (json.dumps(metadata, ensure_ascii=False), file_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"更新文件元数据失败: {e}")
+            return False
+
+    def update_file_metadata_batch(self, updates: List[Tuple[int, Dict[str, Any]]]) -> int:
+        """批量更新文件元数据
+
+        Args:
+            updates: [(file_id, metadata), ...] 列表
+
+        Returns:
+            更新成功的数量
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        count = 0
+
+        try:
+            for file_id, metadata in updates:
+                cursor.execute('''
+                    UPDATE files SET metadata = ? WHERE id = ?
+                ''', (json.dumps(metadata, ensure_ascii=False), file_id))
+                if cursor.rowcount > 0:
+                    count += 1
+            conn.commit()
+        except Exception as e:
+            print(f"批量更新文件元数据失败: {e}")
+            conn.rollback()
+
+        return count
+
     def _row_to_file_record(self, row: sqlite3.Row) -> FileRecord:
         """将数据库行转换为FileRecord"""
         # 获取semantic_filename，如果列不存在则返回None
@@ -406,6 +480,13 @@ class DatabaseManager:
             semantic_filename = row['semantic_filename'] if 'semantic_filename' in row.keys() else None
         except (KeyError, IndexError):
             semantic_filename = None
+
+        # 获取metadata，如果列不存在则返回None
+        try:
+            metadata_str = row['metadata'] if 'metadata' in row.keys() else None
+            metadata = json.loads(metadata_str) if metadata_str else None
+        except (KeyError, IndexError, json.JSONDecodeError):
+            metadata = None
 
         return FileRecord(
             id=row['id'],
@@ -419,7 +500,8 @@ class DatabaseManager:
             semantic_categories=json.loads(row['semantic_categories'] or '[]'),
             directory_path=row['directory_path'],
             added_time=row['added_time'],
-            semantic_filename=semantic_filename
+            semantic_filename=semantic_filename,
+            metadata=metadata
         )
     
     # ==================== 数据块表操作 ====================

@@ -119,6 +119,7 @@ data_test_debug/
 *.pth
 *.bin
 *.safetensors
+*.gguf
 
 # Temp files
 *.tmp

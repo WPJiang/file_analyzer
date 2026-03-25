@@ -1,5 +1,5 @@
 {
-    "initial_directory": "D:/张美娜找工作-2026",
+    "initial_directory": "D:/jiangweipeng/trae_code/个人文件/图片sample",
     "low_memory_mode": {
         "enabled": true,
         "description": "低内存设备优化模式。启用后会降低内存占用但可能增加处理时间。适用于内存≤8GB的设备。启用后建议: 1)embedding.model_name改为L6版本 2)ocr_max_image_width降至1000 3)enable_mkldnn设为false",

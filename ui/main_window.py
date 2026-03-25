@@ -895,6 +895,174 @@ class ScanWorker(QThread):
         return files, dir_structure
 
 
+class GenerateCategoryWorker(QThread):
+    """生成类别信息的工作线程"""
+    progress = pyqtSignal(str, int)
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, categories: List[str]):
+        super().__init__()
+        self.categories = categories
+
+    def run(self):
+        """在工作线程中执行 LLM 调用生成类别信息"""
+        try:
+            from models.model_manager import get_llm_client, is_llm_available, get_llm_type
+
+            self.progress.emit("检查 LLM 服务...", 10)
+
+            if not is_llm_available():
+                # LLM 不可用，使用默认信息
+                self.progress.emit("LLM 服务不可用，使用默认信息", 100)
+                default_info = self._get_default_category_info(self.categories)
+                self.finished.emit({
+                    'success': True,
+                    'category_info': default_info,
+                    'used_llm': False
+                })
+                return
+
+            self.progress.emit(f"正在使用 AI ({get_llm_type()}) 生成类别信息...", 30)
+
+            client = get_llm_client()
+            category_info = client.generate_category_info_batch(self.categories)
+
+            self.progress.emit("类别信息生成完成", 100)
+            self.finished.emit({
+                'success': True,
+                'category_info': category_info,
+                'used_llm': True
+            })
+
+        except Exception as e:
+            import traceback
+            print(f"[GenerateCategoryWorker] 生成类别信息失败: {e}\n{traceback.format_exc()}")
+            # 出错时使用默认信息
+            default_info = self._get_default_category_info(self.categories)
+            self.finished.emit({
+                'success': True,
+                'category_info': default_info,
+                'used_llm': False,
+                'error': str(e)
+            })
+
+    def _get_default_category_info(self, categories: list) -> dict:
+        """生成默认的类别信息"""
+        return {
+            cat: {
+                "description": f"{cat}相关文件",
+                "keywords": []
+            }
+            for cat in categories
+        }
+
+
+class ImageMetadataWorker(QThread):
+    """图片时空元数据分析工作线程"""
+    progress = pyqtSignal(str, int, int)  # message, current, total
+    finished = pyqtSignal(dict)  # result
+    error = pyqtSignal(str)
+
+    def __init__(self, db_manager, file_ids: List[int] = None):
+        super().__init__()
+        self.db_manager = db_manager
+        self.file_ids = file_ids  # 指定文件ID列表，None则处理所有图片
+        self._is_cancelled = False
+
+    def cancel(self):
+        """取消分析"""
+        self._is_cancelled = True
+
+    def run(self):
+        """执行图片元数据分析"""
+        try:
+            from semantic_representation.image_metadata_extractor import ImageMetadataExtractor
+
+            extractor = ImageMetadataExtractor(use_gps_reverse=True)
+
+            # 获取待分析的图片文件
+            if self.file_ids:
+                files = []
+                for file_id in self.file_ids:
+                    record = self.db_manager.get_file_by_id(file_id)
+                    if record:
+                        files.append(record)
+            else:
+                # 获取所有图片类型文件
+                files = self.db_manager.get_files_by_type('image')
+
+            total = len(files)
+            if total == 0:
+                self.finished.emit({'processed': 0, 'updated': 0, 'errors': 0})
+                return
+
+            self.progress.emit(f"开始分析 {total} 个图片文件...", 0, total)
+
+            processed = 0
+            updated = 0
+            errors = 0
+            updates = []
+
+            for file_record in files:
+                if self._is_cancelled:
+                    break
+
+                processed += 1
+                file_path = file_record.file_path
+
+                # 检查是否为图片文件
+                if not extractor.is_image_file(file_path):
+                    continue
+
+                try:
+                    # 提取元数据
+                    metadata = extractor.extract_metadata(file_path)
+
+                    # 只有提取到有意义的信息才更新
+                    has_useful_info = any([
+                        metadata.get('capture_time_extracted'),
+                        metadata.get('capture_time_from_filename'),
+                        metadata.get('location_info'),
+                        metadata.get('image_width'),
+                        metadata.get('image_height')
+                    ])
+
+                    if has_useful_info:
+                        updates.append((file_record.id, metadata))
+                        updated += 1
+
+                    # 更新进度
+                    if processed % 10 == 0 or processed == total:
+                        self.progress.emit(
+                            f"已处理 {processed}/{total} 个文件，更新 {updated} 个",
+                            processed, total
+                        )
+
+                except Exception as e:
+                    errors += 1
+                    print(f"[ImageMetadataWorker] 处理文件失败: {file_path}, 错误: {e}")
+
+            # 批量更新数据库
+            if updates:
+                self.db_manager.update_file_metadata_batch(updates)
+
+            result = {
+                'processed': processed,
+                'updated': updated,
+                'errors': errors,
+                'cancelled': self._is_cancelled
+            }
+
+            self.progress.emit(f"分析完成: 处理 {processed} 个，更新 {updated} 个", total, total)
+            self.finished.emit(result)
+
+        except Exception as e:
+            import traceback
+            print(f"[ImageMetadataWorker] 分析失败: {e}\n{traceback.format_exc()}")
+            self.error.emit(f"图片元数据分析失败: {str(e)}")
+
+
 class MainWindow(QMainWindow):
     """主窗口类"""
     
@@ -933,6 +1101,10 @@ class MainWindow(QMainWindow):
         self.analyze_worker = None
         self.parse_worker = None
         self.semantic_represent_worker = None
+        self._generate_category_worker = None
+        self._image_metadata_worker = None
+        self._pending_category_system_name = None
+        self._pending_category_list = None
         self.config = self._load_config()
         
         # 初始化日志会话（根据配置决定是否启用）
@@ -1195,6 +1367,14 @@ class MainWindow(QMainWindow):
         auto_categories_action.setToolTip("从当前目录结构自动获取分类类别")
         auto_categories_action.triggered.connect(self.auto_get_categories_from_directory)
         tools_menu.addAction(auto_categories_action)
+
+        tools_menu.addSeparator()
+
+        # 图片时空数据分析
+        image_metadata_action = QAction("图片时空数据分析", self)
+        image_metadata_action.setToolTip("提取图片的拍摄时间、地点等元数据信息")
+        image_metadata_action.triggered.connect(self.analyze_image_metadata)
+        tools_menu.addAction(image_metadata_action)
 
         tools_menu.addSeparator()
 
@@ -1921,11 +2101,94 @@ class MainWindow(QMainWindow):
         """显示设置对话框"""
         QMessageBox.information(self, "设置", "设置功能待实现")
 
+    def analyze_image_metadata(self):
+        """分析图片时空元数据"""
+        # 检查是否有图片文件
+        image_files = self.db_manager.get_files_by_type('image')
+
+        if not image_files:
+            QMessageBox.information(
+                self, "提示",
+                "数据库中没有图片文件。\n请先扫描并解析包含图片的目录。"
+            )
+            return
+
+        reply = QMessageBox.question(
+            self, "图片时空数据分析",
+            f"将对 {len(image_files)} 个图片文件进行时空元数据分析。\n\n"
+            "将提取以下信息：\n"
+            "• 拍摄时间（从EXIF等元数据提取）\n"
+            "• 拍摄时间（从文件名解析）\n"
+            "• 地点信息（从GPS坐标反查）\n"
+            "• 图片尺寸\n\n"
+            "是否继续？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        # 禁用重复操作
+        if self._image_metadata_worker and self._image_metadata_worker.isRunning():
+            QMessageBox.warning(self, "提示", "图片元数据分析正在进行中...")
+            return
+
+        # 启动工作线程
+        self._image_metadata_worker = ImageMetadataWorker(self.db_manager)
+        self._image_metadata_worker.progress.connect(self._on_image_metadata_progress)
+        self._image_metadata_worker.finished.connect(self._on_image_metadata_finished)
+        self._image_metadata_worker.error.connect(self._on_image_metadata_error)
+        self._image_metadata_worker.start()
+
+        self.statusbar.showMessage("正在分析图片元数据...")
+        QApplication.processEvents()
+
+    def _on_image_metadata_progress(self, message: str, current: int, total: int):
+        """图片元数据分析进度回调"""
+        self.statusbar.showMessage(message)
+
+    def _on_image_metadata_finished(self, result: dict):
+        """图片元数据分析完成回调"""
+        processed = result.get('processed', 0)
+        updated = result.get('updated', 0)
+        errors = result.get('errors', 0)
+        cancelled = result.get('cancelled', False)
+
+        if cancelled:
+            self.statusbar.showMessage("图片元数据分析已取消")
+            QMessageBox.information(
+                self, "分析取消",
+                f"图片元数据分析已取消。\n"
+                f"已处理: {processed} 个文件\n"
+                f"已更新: {updated} 个文件"
+            )
+        else:
+            self.statusbar.showMessage(
+                f"图片元数据分析完成: 处理 {processed} 个，更新 {updated} 个"
+            )
+            QMessageBox.information(
+                self, "分析完成",
+                f"图片时空元数据分析完成！\n\n"
+                f"处理文件: {processed} 个\n"
+                f"更新元数据: {updated} 个\n"
+                f"处理错误: {errors} 个"
+            )
+
+        # 清理工作线程
+        self._image_metadata_worker = None
+
+    def _on_image_metadata_error(self, error_msg: str):
+        """图片元数据分析错误回调"""
+        self.statusbar.showMessage(f"图片元数据分析失败: {error_msg}")
+        QMessageBox.warning(self, "分析失败", error_msg)
+        self._image_metadata_worker = None
+
     def auto_get_categories_from_directory(self):
         """从当前目录结构自动获取分类类别
 
         获取当前目录的子目录列表（不含文件），作为类别体系。
-        同步调用 ollama 本地模型，基于类别名补充关键词和类别描述。
+        使用独立线程调用 LLM 模型，基于类别名补充关键词和类别描述。
         自动保存到语义类别表。
         """
         if not self.current_directory:
@@ -1964,23 +2227,61 @@ class MainWindow(QMainWindow):
             )
 
             if ok and name:
-                # 调用 ollama 生成类别的描述和关键词
-                category_info = self._generate_category_info_with_ollama(categories)
+                # 保存数据供线程回调使用
+                self._pending_category_system_name = name
+                self._pending_category_list = categories
 
-                # 添加到分类面板的类别体系
-                success = self.classification_panel.add_category_system(name, categories, category_info)
-                if success:
-                    # 自动保存到数据库的语义类别表
-                    self._save_category_system_to_database(name, categories, category_info)
+                # 禁用菜单项，防止重复操作
+                self.statusbar.showMessage("正在使用 AI 生成类别信息，请稍候...")
+                QApplication.processEvents()
 
-                    self.statusbar.showMessage(f"已创建并保存类别体系 '{name}'，包含 {len(categories)} 个类别")
-                    QMessageBox.information(
-                        self, "成功",
-                        f"已创建类别体系 '{name}'\n类别: {', '.join(categories)}\n已使用 AI 生成类别描述和关键词\n已保存到数据库"
-                    )
+                # 启动工作线程
+                self._generate_category_worker = GenerateCategoryWorker(categories)
+                self._generate_category_worker.progress.connect(self._on_generate_category_progress)
+                self._generate_category_worker.finished.connect(self._on_generate_category_finished)
+                self._generate_category_worker.start()
 
         except Exception as e:
             QMessageBox.critical(self, "错误", f"获取目录结构失败: {str(e)}")
+
+    def _on_generate_category_progress(self, message: str, progress: int):
+        """生成类别信息进度回调"""
+        self.statusbar.showMessage(message)
+
+    def _on_generate_category_finished(self, result: dict):
+        """生成类别信息完成回调"""
+        if not result.get('success', False):
+            QMessageBox.warning(self, "生成失败", f"生成类别信息失败: {result.get('error', '未知错误')}")
+            return
+
+        name = self._pending_category_system_name
+        categories = self._pending_category_list
+        category_info = result.get('category_info', {})
+        used_llm = result.get('used_llm', False)
+
+        # 添加到分类面板的类别体系
+        success = self.classification_panel.add_category_system(name, categories, category_info)
+        if success:
+            # 自动保存到数据库的语义类别表
+            self._save_category_system_to_database(name, categories, category_info)
+
+            self.statusbar.showMessage(f"已创建并保存类别体系 '{name}'，包含 {len(categories)} 个类别")
+
+            if used_llm:
+                QMessageBox.information(
+                    self, "成功",
+                    f"已创建类别体系 '{name}'\n类别: {', '.join(categories)}\n已使用 AI 生成类别描述和关键词\n已保存到数据库"
+                )
+            else:
+                QMessageBox.information(
+                    self, "成功",
+                    f"已创建类别体系 '{name}'\n类别: {', '.join(categories)}\n已保存到数据库\n（LLM 服务不可用，使用默认描述）"
+                )
+        else:
+            QMessageBox.warning(self, "失败", f"类别体系 '{name}' 已存在")
+
+        # 清理工作线程引用
+        self._generate_category_worker = None
 
     def _save_category_system_to_database(self, system_name: str, categories: List[str],
                                             category_info: Dict[str, Dict[str, Any]]):
