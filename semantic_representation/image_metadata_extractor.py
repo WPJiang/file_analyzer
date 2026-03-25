@@ -55,9 +55,10 @@ class ImageMetadataExtractor:
             return False
 
     def _check_heic_support(self) -> bool:
-        """检查HEIC支持"""
+        """检查HEIC支持并注册"""
         try:
             from pillow_heif import register_heif_opener
+            register_heif_opener()  # 注册HEIC支持
             return True
         except ImportError:
             return False
@@ -128,39 +129,34 @@ class ImageMetadataExtractor:
                 metadata['image_width'] = img.width
                 metadata['image_height'] = img.height
 
-                # 获取EXIF数据（不是所有格式都支持）
-                if not hasattr(img, '_getexif'):
-                    # 某些格式不支持EXIF（如GIF、PNG），这是正常的
-                    return metadata
+                # 获取EXIF数据（使用 _getexif 获取完整数据包括GPS字典）
+                if hasattr(img, '_getexif'):
+                    exif_data = img._getexif()
+                    if exif_data:
+                        # 解析EXIF标签
+                        exif = {}
+                        for tag_id, value in exif_data.items():
+                            tag = TAGS.get(tag_id, tag_id)
+                            exif[tag] = value
 
-                exif_data = img._getexif()
-                if not exif_data:
-                    return metadata
+                        # 提取拍摄时间
+                        if 'DateTimeOriginal' in exif:
+                            metadata['capture_time_extracted'] = self._parse_exif_time(exif['DateTimeOriginal'])
+                        elif 'DateTime' in exif:
+                            metadata['capture_time_extracted'] = self._parse_exif_time(exif['DateTime'])
 
-                # 解析EXIF标签
-                exif = {}
-                for tag_id, value in exif_data.items():
-                    tag = TAGS.get(tag_id, tag_id)
-                    exif[tag] = value
+                        # 提取GPS信息（_getexif返回的GPSInfo是字典）
+                        if 'GPSInfo' in exif and isinstance(exif['GPSInfo'], dict):
+                            gps_info = {}
+                            for key in exif['GPSInfo'].keys():
+                                name = GPSTAGS.get(key, key)
+                                gps_info[name] = exif['GPSInfo'][key]
 
-                # 提取拍摄时间
-                if 'DateTimeOriginal' in exif:
-                    metadata['capture_time_extracted'] = self._parse_exif_time(exif['DateTimeOriginal'])
-                elif 'DateTime' in exif:
-                    metadata['capture_time_extracted'] = self._parse_exif_time(exif['DateTime'])
-
-                # 提取GPS信息
-                if 'GPSInfo' in exif:
-                    gps_info = {}
-                    for key in exif['GPSInfo'].keys():
-                        name = GPSTAGS.get(key, key)
-                        gps_info[name] = exif['GPSInfo'][key]
-
-                    lat, lon = self._get_gps_coordinates(gps_info)
-                    if lat and lon:
-                        metadata['gps_coordinates'] = {'latitude': lat, 'longitude': lon}
-                        if self.use_gps_reverse:
-                            metadata['location_info'] = self._reverse_geocode(lat, lon)
+                            lat, lon = self._get_gps_coordinates(gps_info)
+                            if lat and lon:
+                                metadata['gps_coordinates'] = {'latitude': lat, 'longitude': lon}
+                                if self.use_gps_reverse:
+                                    metadata['location_info'] = self._reverse_geocode(lat, lon)
 
         except AttributeError:
             # 某些格式不支持EXIF，正常情况，不输出错误
@@ -174,6 +170,7 @@ class ImageMetadataExtractor:
     def _extract_heic_metadata(self, file_path: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """提取HEIC格式元数据"""
         from PIL import Image
+        from PIL.ExifTags import TAGS, GPSTAGS
 
         try:
             with Image.open(file_path) as img:
@@ -181,21 +178,36 @@ class ImageMetadataExtractor:
                 metadata['image_width'] = img.width
                 metadata['image_height'] = img.height
 
-                # HEIC的EXIF数据提取
-                if hasattr(img, 'info') and 'exif' in img.info:
+                # HEIC使用 getexif() 方法
+                exif_obj = img.getexif()
+                if exif_obj:
+                    # 提取拍摄时间
+                    date_time = exif_obj.get(306)  # DateTime
+                    date_time_original = exif_obj.get(36867)  # DateTimeOriginal
+                    if date_time_original:
+                        metadata['capture_time_extracted'] = self._parse_exif_time(date_time_original)
+                    elif date_time:
+                        metadata['capture_time_extracted'] = self._parse_exif_time(date_time)
+
+                    # 提取GPS信息（使用 get_ifd 获取 GPS IFD）
                     try:
-                        from PIL.ExifTags import TAGS, GPSTAGS
-                        exif_data = img.getexif()
-                        if exif_data:
-                            # 查找拍摄时间
-                            for tag_id, value in exif_data.items():
-                                tag = TAGS.get(tag_id, tag_id)
-                                if tag == 'DateTimeOriginal':
-                                    metadata['capture_time_extracted'] = self._parse_exif_time(value)
-                                elif tag == 'DateTime' and not metadata['capture_time_extracted']:
-                                    metadata['capture_time_extracted'] = self._parse_exif_time(value)
+                        gps_ifd = exif_obj.get_ifd(34853)  # GPSInfo tag id
+                        if gps_ifd and isinstance(gps_ifd, dict):
+                            gps_info = {}
+                            for key in gps_ifd.keys():
+                                name = GPSTAGS.get(key, key)
+                                gps_info[name] = gps_ifd[key]
+
+                            lat, lon = self._get_gps_coordinates(gps_info)
+                            if lat and lon:
+                                metadata['gps_coordinates'] = {'latitude': lat, 'longitude': lon}
+                                if self.use_gps_reverse:
+                                    metadata['location_info'] = self._reverse_geocode(lat, lon)
                     except Exception as e:
-                        print(f"[ImageMetadataExtractor] HEIC EXIF解析失败: {e}")
+                        print(f"[ImageMetadataExtractor] HEIC GPS解析失败: {e}")
+
+        except Exception as e:
+            print(f"[ImageMetadataExtractor] HEIC打开失败: {e}")
 
         except Exception as e:
             print(f"[ImageMetadataExtractor] HEIC打开失败: {e}")

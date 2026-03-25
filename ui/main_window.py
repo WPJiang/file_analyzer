@@ -787,13 +787,14 @@ class ScanWorker(QThread):
     """后台扫描工作线程"""
     scan_finished = pyqtSignal(dict)
     scan_progress = pyqtSignal(str, int)
-    
-    def __init__(self, scanner: DirectoryScanner, scan_type: str = 'default'):
+
+    def __init__(self, scanner: DirectoryScanner, scan_type: str = 'default', db_manager=None):
         super().__init__()
         self.scanner = scanner
         self.scan_type = scan_type
         self.directory = None
-    
+        self.db_manager = db_manager
+
     def set_directory(self, directory: str):
         self.directory = directory
     
@@ -860,18 +861,21 @@ class ScanWorker(QThread):
         }
     
     def scan_directory_with_structure(self, directory: str) -> tuple:
-        """扫描目录并收集目录结构
-        
+        """扫描目录并收集目录结构，同时写入数据库
+
         Returns:
             tuple: (文件列表, 目录结构字典)
         """
+        from datetime import datetime
+
         files = []
+        file_records = []
         dir_structure = {'name': os.path.basename(directory), 'path': directory, 'dirs': {}, 'files': []}
-        
+
         for root, dirs, filenames in os.walk(directory):
             # 计算相对路径
             rel_path = os.path.relpath(root, directory)
-            
+
             # 获取当前目录在结构中的位置
             current = dir_structure
             if rel_path != '.':
@@ -885,13 +889,35 @@ class ScanWorker(QThread):
                             'files': []
                         }
                     current = current['dirs'][part]
-            
+
             # 添加文件
             for filename in filenames:
                 file_path = os.path.join(root, filename)
                 files.append(file_path)
                 current['files'].append(file_path)
-        
+
+                # 准备数据库记录
+                if self.db_manager:
+                    try:
+                        stat = os.stat(file_path)
+                        file_ext = os.path.splitext(filename)[1].lower()
+                        file_records.append({
+                            'file_path': file_path,
+                            'file_name': filename,
+                            'file_size': stat.st_size,
+                            'file_type': file_ext,
+                            'modified_time': datetime.fromtimestamp(stat.st_mtime),
+                            'created_time': datetime.fromtimestamp(stat.st_ctime),
+                            'directory_path': directory
+                        })
+                    except Exception as e:
+                        print(f"获取文件信息失败 {file_path}: {e}")
+
+        # 批量写入数据库
+        if self.db_manager and file_records:
+            self.db_manager.add_files_batch(file_records)
+            print(f"已将 {len(file_records)} 个文件写入数据库")
+
         return files, dir_structure
 
 
@@ -1467,14 +1493,14 @@ class MainWindow(QMainWindow):
         """启动后台扫描"""
         if self.scan_worker and self.scan_worker.isRunning():
             self.scan_worker.wait()
-        
-        self.scan_worker = ScanWorker(self.scanner, scan_type)
+
+        self.scan_worker = ScanWorker(self.scanner, scan_type, self.db_manager)
         if directory:
             self.scan_worker.set_directory(directory)
-        
+
         self.scan_worker.scan_progress.connect(self.on_scan_progress)
         self.scan_worker.scan_finished.connect(self.on_scan_finished)
-        
+
         self.statusbar.showMessage("正在扫描...")
         self.scan_worker.start()
     

@@ -347,11 +347,22 @@ class DatabaseManager:
         rows = cursor.fetchall()
         return [self._row_to_file_record(row) for row in rows]
 
+    # 文件类型到扩展名的映射
+    FILE_TYPE_EXTENSIONS = {
+        'image': {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.webp', '.heic', '.heif', '.livp', '.ico', '.svg'},
+        'video': {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.mpeg', '.mpg'},
+        'audio': {'.mp3', '.wav', '.flac', '.aac', '.ogg', '.wma', '.m4a', '.ape', '.opus'},
+        'pdf': {'.pdf'},
+        'document': {'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.rtf', '.odt', '.ods', '.odp'},
+        'archive': {'.zip', '.rar', '.7z', '.tar', '.gz', '.bz2'},
+        'code': {'.py', '.js', '.java', '.c', '.cpp', '.h', '.cs', '.go', '.rs', '.ts', '.jsx', '.tsx', '.vue'},
+    }
+
     def get_files_by_type(self, file_type: str) -> List[FileRecord]:
         """根据文件类型获取文件列表
 
         Args:
-            file_type: 文件类型，如 'image', 'pdf', 'document' 等
+            file_type: 文件类型，如 'image', 'pdf', 'document' 等，或者直接使用扩展名如 '.jpg'
 
         Returns:
             文件记录列表
@@ -359,12 +370,26 @@ class DatabaseManager:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        # 使用 LIKE 匹配，因为 file_type 可能存储为 'image/jpeg' 等格式
-        cursor.execute('''
-            SELECT * FROM files
-            WHERE file_type LIKE ?
-            ORDER BY added_time
-        ''', (f'{file_type}%',))
+        # 获取对应的扩展名列表
+        extensions = self.FILE_TYPE_EXTENSIONS.get(file_type)
+
+        if extensions:
+            # 使用 IN 查询匹配多个扩展名
+            placeholders = ','.join(['?' for _ in extensions])
+            cursor.execute(f'''
+                SELECT * FROM files
+                WHERE file_type IN ({placeholders})
+                ORDER BY added_time
+            ''', list(extensions))
+        else:
+            # 如果不是预定义类型，尝试作为扩展名匹配
+            # 确保扩展名以点开头
+            ext = file_type if file_type.startswith('.') else f'.{file_type}'
+            cursor.execute('''
+                SELECT * FROM files
+                WHERE file_type = ?
+                ORDER BY added_time
+            ''', (ext.lower(),))
 
         rows = cursor.fetchall()
         return [self._row_to_file_record(row) for row in rows]
