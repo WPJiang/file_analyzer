@@ -12,42 +12,8 @@ from typing import Dict, Any, List, Optional, Tuple
 from PIL import Image
 
 
-# 图片标签分类体系 - 基于常见图片分类测评集和个人照片场景
-IMAGE_TAG_CATEGORIES = {
-    # 场景类别
-    "场景": [
-        "室内", "户外", "自然风光", "城市街景", "建筑", "海滩", "山脉",
-        "森林", "公园", "花园", "田野", "沙漠", "雪景", "夜景"
-    ],
-    # 人物类别
-    "人物": [
-        "单人照", "双人照", "合影", "自拍", "家庭照", "儿童", "老人",
-        "朋友聚会", "情侣", "婚礼"
-    ],
-    # 活动类别
-    "活动": [
-        "旅行", "美食", "运动健身", "节日庆典", "生日派对", "毕业典礼",
-        "会议活动", "演出表演", "宠物", "游戏娱乐"
-    ],
-    # 物品类别
-    "物品": [
-        "美食饮品", "服饰穿搭", "电子产品", "交通工具", "家具家居",
-        "书籍文具", "工艺品", "珠宝首饰", "化妆品", "玩具"
-    ],
-    # 摄影类型
-    "摄影": [
-        "人像摄影", "风景摄影", "微距摄影", "街拍", "纪实摄影",
-        "艺术摄影", "建筑摄影", "美食摄影", "产品摄影"
-    ],
-    # 时间/季节
-    "时间": [
-        "日出", "日落", "白天", "夜晚", "春天", "夏天", "秋天", "冬天"
-    ],
-    # 情感氛围
-    "氛围": [
-        "温馨", "浪漫", "欢乐", "宁静", "活力", "怀旧", "清新", "时尚"
-    ]
-}
+# 图片标签分类体系 - 从配置文件加载
+IMAGE_TAG_CATEGORIES = {}
 
 # 支持的图片格式（llama.cpp支持的格式）
 SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif'}
@@ -59,23 +25,30 @@ MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5MB，留一些余量
 MAX_IMAGE_DIMENSION = 448
 
 
-def _load_max_dimension_from_config():
-    """从配置文件加载图片缩放最大尺寸"""
-    global MAX_IMAGE_DIMENSION
+def _load_config():
+    """从配置文件加载图片处理配置"""
+    global MAX_IMAGE_DIMENSION, IMAGE_TAG_CATEGORIES
+
     try:
-        import json
         config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
         if os.path.exists(config_path):
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
+
+                # 加载图片缩放尺寸
                 image_config = config.get('image_processing', {})
                 MAX_IMAGE_DIMENSION = image_config.get('max_dimension', 448)
+
+                # 加载图片标签分类体系
+                image_tag_config = config.get('image_tag_categories', {})
+                IMAGE_TAG_CATEGORIES = image_tag_config.get('categories', {})
+
     except Exception as e:
         print(f"[ImageCaptionTagger] 加载配置失败: {e}")
 
 
 # 模块加载时读取配置
-_load_max_dimension_from_config()
+_load_config()
 
 # 扁平化的所有标签列表
 ALL_IMAGE_TAGS = []

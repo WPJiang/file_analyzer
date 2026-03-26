@@ -822,6 +822,17 @@ class SemanticRepresentation:
 
         processing_logger.log_step("类型判断", f"is_image={is_image}, modality={modality_str}")
 
+        # 判断图片来源：是否为图片文件（而非PDF/PPT/Word中的图片）
+        is_image_file = False
+        if is_image and hasattr(block, 'metadata') and block.metadata:
+            source = block.metadata.get('source', '')
+            is_image_file = source == 'image_parser'
+            processing_logger.log_step("图片来源判断", f"source={source}, is_image_file={is_image_file}")
+
+        # 获取图片文本提取方式配置
+        image_extraction_method = self.config.get('image_processing', {}).get('image_text_extraction_method', 'caption')
+        processing_logger.log_step("配置读取", f"image_text_extraction_method={image_extraction_method}")
+
         # 确定图片路径：使用addr字段（指向图片文件路径）
         image_path = None
         if is_image:
@@ -838,11 +849,39 @@ class SemanticRepresentation:
                 image_path = block.file_path
                 processing_logger.log_step("图片路径", f"使用file_path字段路径作为备选: {image_path}")
 
+        # 初始化caption结果
+        caption_result = None
+
         # 第一步：提取文本内容
         if is_image and image_path:
-            # 图片类型：使用OCR或基础描述提取文本
-            processing_logger.log_step("文本提取", "使用ImageTextExtractor提取图片文本")
-            text_content = self.image_extractor.extract(image_path, source_file_path=block.file_path)
+            # 判断是否使用caption模式
+            use_caption = is_image_file and image_extraction_method == 'caption'
+            processing_logger.log_step("文本提取方式", f"use_caption={use_caption} (is_image_file={is_image_file}, method={image_extraction_method})")
+
+            if use_caption:
+                # 使用Caption模式：调用ImageCaptionTagger获取描述和标签
+                processing_logger.log_step("文本提取", "使用ImageCaptionTagger生成图片描述和标签")
+                try:
+                    from semantic_representation.image_caption_tagger import ImageCaptionTagger
+                    caption_tagger = ImageCaptionTagger()
+                    caption_result = caption_tagger.generate_caption_and_tags(image_path)
+
+                    if caption_result:
+                        # 使用caption作为文本描述
+                        text_content = caption_result.get('caption', '')
+                        processing_logger.log_step("Caption生成完成", f"caption长度: {len(text_content)}")
+                    else:
+                        # caption失败，降级到OCR
+                        processing_logger.log_step("Caption失败", "降级使用OCR")
+                        text_content = self.image_extractor.extract(image_path, source_file_path=block.file_path)
+                except Exception as e:
+                    processing_logger.log_step("Caption异常", f"异常: {e}，降级使用OCR")
+                    text_content = self.image_extractor.extract(image_path, source_file_path=block.file_path)
+            else:
+                # 使用OCR模式（其他文件中的图片，或配置为OCR模式的图片文件）
+                processing_logger.log_step("文本提取", "使用ImageTextExtractor提取图片文本(OCR)")
+                text_content = self.image_extractor.extract(image_path, source_file_path=block.file_path)
+
             processing_logger.log_step("文本提取完成", f"提取文本长度: {len(text_content)}")
         else:
             # 其他类型：从addr读取文本内容
@@ -859,8 +898,13 @@ class SemanticRepresentation:
         processing_logger.log_step("描述生成完成", f"描述长度: {len(text_description)}")
 
         # 第三步：提取关键词
-        processing_logger.log_step("提取关键词", "使用KeywordExtractor")
-        keywords = self.keyword_extractor.extract(text_description)
+        # 如果有caption结果且包含tags，优先使用tags作为关键词
+        if caption_result and caption_result.get('tags'):
+            keywords = caption_result['tags']
+            processing_logger.log_step("关键词提取", "使用Caption生成的标签作为关键词")
+        else:
+            processing_logger.log_step("提取关键词", "使用KeywordExtractor")
+            keywords = self.keyword_extractor.extract(text_description)
         processing_logger.log_step("关键词提取完成", f"关键词数量: {len(keywords)}", {"keywords": keywords[:10]})
 
         # 第四步：获取语义文件名

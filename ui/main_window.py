@@ -1378,6 +1378,9 @@ class MainWindow(QMainWindow):
                     if self.db_manager:
                         self._save_category_system_to_database(system_name, category_names, category_info)
 
+        # 加载图片数据默认分类体系
+        self._load_image_tag_categories()
+
     def _load_category_systems_from_database(self):
         """从数据库加载已保存的类别体系"""
         if not self.db_manager:
@@ -1406,6 +1409,44 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             print(f"[MainWindow] 从数据库加载类别体系失败: {e}")
+
+    def _load_image_tag_categories(self):
+        """从配置文件加载图片数据默认分类体系"""
+        image_tag_config = self.config.get('image_tag_categories', {})
+
+        if not image_tag_config:
+            return
+
+        system_name = image_tag_config.get('system_name', '图片数据默认分类')
+        categories_dict = image_tag_config.get('categories', {})
+
+        if not categories_dict:
+            return
+
+        # 检查是否已存在同名类别体系
+        if self.classification_panel.get_category_system(system_name):
+            return
+
+        # 构建类别名称列表（将所有分类下的标签合并）
+        category_names = []
+        category_info = {}
+
+        for group_name, tags in categories_dict.items():
+            for tag in tags:
+                if tag not in category_names:
+                    category_names.append(tag)
+                    category_info[tag] = {
+                        'description': f'{group_name}类图片',
+                        'keywords': [tag]
+                    }
+
+        if category_names:
+            # 添加到分类面板
+            self.classification_panel.add_category_system(system_name, category_names, category_info)
+            # 保存到数据库
+            if self.db_manager:
+                self._save_category_system_to_database(system_name, category_names, category_info)
+            print(f"[MainWindow] 加载图片数据默认分类体系: {system_name}, 包含 {len(category_names)} 个类别")
 
     def _init_logging(self):
         """根据配置初始化日志"""
@@ -2314,10 +2355,10 @@ class MainWindow(QMainWindow):
         if dialog.exec_() == SettingsDialog.Accepted:
             # 重新加载配置
             self._load_config()
-            # 重新加载图片缩放配置
+            # 重新加载图片处理配置
             try:
-                from semantic_representation.image_caption_tagger import _load_max_dimension_from_config
-                _load_max_dimension_from_config()
+                from semantic_representation.image_caption_tagger import _load_config
+                _load_config()
             except ImportError:
                 pass
             self.statusbar.showMessage("设置已保存")

@@ -327,6 +327,34 @@ class SettingsDialog(QDialog):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
+        # 图片文件文本提取方式
+        extraction_group = QGroupBox("图片文件文本提取方式")
+        extraction_layout = QVBoxLayout(extraction_group)
+
+        self.image_extraction_buttons = QButtonGroup(extraction_group)
+        extraction_methods = [
+            ('caption', 'Caption模式 (推荐)', '使用LLM生成图片描述和标签，语义更丰富'),
+            ('ocr', 'OCR模式', '使用OCR识别图片中的文字，适合文档类图片')
+        ]
+
+        current_method = self.config.get('image_processing', {}).get('image_text_extraction_method', 'caption')
+
+        for i, (method_val, method_name, method_desc) in enumerate(extraction_methods):
+            rb = QRadioButton(method_name)
+            rb.setProperty('method_value', method_val)
+            rb.setToolTip(method_desc)
+            if method_val == current_method:
+                rb.setChecked(True)
+            self.image_extraction_buttons.addButton(rb, i)
+            extraction_layout.addWidget(rb)
+
+        # 添加说明标签
+        hint_label = QLabel("注：仅对图片文件生效，PDF/PPT/Word中的图片始终使用OCR")
+        hint_label.setStyleSheet("color: gray; font-size: 11px;")
+        extraction_layout.addWidget(hint_label)
+
+        layout.addWidget(extraction_group)
+
         # 图片缩放设置
         resize_group = QGroupBox("图片缩放设置")
         resize_layout = QFormLayout(resize_group)
@@ -479,6 +507,11 @@ class SettingsDialog(QDialog):
             if key in dim_text:
                 self.config['image_processing']['max_dimension'] = val
                 break
+
+        # 图片文件文本提取方式
+        checked_extraction = self.image_extraction_buttons.checkedButton()
+        if checked_extraction:
+            self.config['image_processing']['image_text_extraction_method'] = checked_extraction.property('method_value')
 
         # OCR设置
         if 'image' not in self.config['semantic_representation']:
