@@ -469,23 +469,11 @@
         }
     },
     "llm": {
-        "type": "local_llama",
+        "type": "cloud",
         "description": "LLM类型: 'cloud'使用云侧大模型, 'ollama'使用本地Ollama服务, 'local_llama'使用本地llama.cpp服务器。默认使用本地llama.cpp服务器",
         "cloud": {
-            "api_key": "54d9b6b997a44211b21c05a7f63b0889.cqkGpYlP3CmIJ209",
-            "description_api_key": "云侧API密钥。可留空使用环境变量OPENAI_API_KEY 54d9b6b997a44211b21c05a7f63b0889.cqkGpYlP3CmIJ209 sk-sp-03303623ef904ed99937322dedb9ea11",
-            "base_url": "https://open.bigmodel.cn/api/paas/v4",
-            "description_base_url": "云侧API基础URL。OpenAI: https://api.openai.com/v1, 通义千问: https://dashscope.aliyuncs.com/compatible-mode/v1, https://coding.dashscope.aliyuncs.com/v1,https://open.bigmodel.cn/api/paas/v4 DeepSeek: https://api.deepseek.com/v1",
-            "model": "glm-4.7",
-            "description_model": "模型名称。OpenAI: gpt-4o, gpt-4o-mini; 通义千问: qwen-vl-plus, qwen-vl-max; DeepSeek: deepseek-chat",
-            "vision_model": "glm-4.7",
-            "description_vision_model": "视觉模型名称，用于图片分析。如与model相同可留空",
-            "timeout": 120,
-            "description_timeout": "API调用超时时间（秒）",
-            "max_tokens": 65536,
-            "description_max_tokens": "最大生成token数",
-            "temperature": 0.7,
-            "description_temperature": "生成温度，0-1之间，越高越随机"
+            "config_file": "api_config.json",
+            "description_config_file": "云侧API配置文件路径，包含api_key、base_url、model等配置。请复制api_config_example.json并重命名为api_config.json，然后填入实际的API密钥"
         },
         "ollama": {
             "base_url": "http://localhost:11434",
@@ -502,10 +490,14 @@
             "description_model": "模型名称，与启动时指定的模型对应",
             "timeout": 300,
             "description_timeout": "API调用超时时间（秒），本地模型可能较慢",
-            "max_tokens": 2048,
+            "max_tokens": 8192,
             "description_max_tokens": "最大生成token数",
             "temperature": 0.7,
             "description_temperature": "生成温度，0-1之间，越高越随机"
         }
+    },
+    "image_processing": {
+        "max_dimension": 448,
+        "description_max_dimension": "图片缩放最大尺寸（像素），保持长宽比。用于图片Caption生成前的预处理。推荐值: 224(快速), 448(平衡), 896(高质量)"
     }
 }

@@ -560,12 +560,33 @@ class ModelManager:
             self._llm_client = None
 
     def _init_cloud_llm_client(self, cloud_config: Dict):
-        """初始化云侧LLM客户端"""
+        """初始化云侧LLM客户端
+
+        从 api_config.json 文件读取云侧API配置
+        """
         try:
             from models.cloud_llm_client import CloudLLMClient
+            import json
 
-            self._llm_client = CloudLLMClient(config=cloud_config)
-            print(f"[ModelManager] 云侧LLM客户端初始化完成")
+            # 获取 api_config.json 文件路径
+            config_file = cloud_config.get('config_file', 'api_config.json')
+            api_config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), config_file)
+
+            # 加载 api_config.json
+            api_config = {}
+            if os.path.exists(api_config_path):
+                try:
+                    with open(api_config_path, 'r', encoding='utf-8') as f:
+                        api_config = json.load(f)
+                    print(f"[ModelManager] 已加载云侧API配置: {api_config_path}")
+                except Exception as e:
+                    print(f"[ModelManager] WARNING: 加载 {config_file} 失败: {e}")
+            else:
+                print(f"[ModelManager] WARNING: 云侧API配置文件不存在: {api_config_path}")
+                print(f"[ModelManager] 请复制 api_config_example.json 并重命名为 {config_file}，然后填入实际的API密钥")
+
+            self._llm_client = CloudLLMClient(config=api_config)
+            print(f"[ModelManager] 云侧LLM客户端初始化完成，模型: {api_config.get('model', 'default')}")
 
         except ImportError as e:
             print(f"[ModelManager] WARNING: 无法导入CloudLLMClient: {e}")

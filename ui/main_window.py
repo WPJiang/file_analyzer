@@ -1004,23 +1004,27 @@ class ImageMetadataWorker(QThread):
         """执行图片元数据分析"""
         try:
             from semantic_representation.image_metadata_extractor import ImageMetadataExtractor
+            from database.database import SpatiotemporalAnalysisStatus
 
             extractor = ImageMetadataExtractor(use_gps_reverse=True)
 
-            # 获取待分析的图片文件
+            # 获取待分析的图片文件（仅状态为"待分析"的）
             if self.file_ids:
                 files = []
                 for file_id in self.file_ids:
                     record = self.db_manager.get_file_by_id(file_id)
-                    if record:
+                    if record and record.spatiotemporal_analysis_status == SpatiotemporalAnalysisStatus.PENDING:
                         files.append(record)
             else:
-                # 获取所有图片类型文件
-                files = self.db_manager.get_files_by_type('image')
+                # 获取所有待分析的图片类型文件
+                files = self.db_manager.get_files_by_spatiotemporal_status(SpatiotemporalAnalysisStatus.PENDING)
+                # 过滤出图片类型
+                image_extensions = self.db_manager.FILE_TYPE_EXTENSIONS.get('image', set())
+                files = [f for f in files if f.file_type.lower() in image_extensions]
 
             total = len(files)
             if total == 0:
-                self.finished.emit({'processed': 0, 'updated': 0, 'errors': 0})
+                self.finished.emit({'processed': 0, 'updated': 0, 'errors': 0, 'skipped': 0})
                 return
 
             self.progress.emit(f"开始分析 {total} 个图片文件...", 0, total)
@@ -1028,7 +1032,7 @@ class ImageMetadataWorker(QThread):
             processed = 0
             updated = 0
             errors = 0
-            updates = []
+            skipped = 0
 
             for file_record in files:
                 if self._is_cancelled:
@@ -1037,26 +1041,49 @@ class ImageMetadataWorker(QThread):
                 processed += 1
                 file_path = file_record.file_path
 
-                # 检查是否为图片文件
+                # 检查是否为支持的图片格式
                 if not extractor.is_image_file(file_path):
+                    # 不支持的格式，更新状态为"不支持"
+                    self.db_manager.update_spatiotemporal_status(
+                        file_record.id, SpatiotemporalAnalysisStatus.NOT_SUPPORTED
+                    )
+                    skipped += 1
                     continue
 
                 try:
                     # 提取元数据
                     metadata = extractor.extract_metadata(file_path)
 
-                    # 只有提取到有意义的信息才更新
+                    # 判断是否提取到有用信息
                     has_useful_info = any([
                         metadata.get('capture_time_extracted'),
                         metadata.get('capture_time_from_filename'),
-                        metadata.get('location_info'),
-                        metadata.get('image_width'),
-                        metadata.get('image_height')
+                        metadata.get('location_info')
                     ])
 
+                    # 确定原文件创建时间（优先capture_time_extracted，其次capture_time_from_filename）
+                    original_created_time = metadata.get('capture_time_extracted')
+                    if not original_created_time:
+                        original_created_time = metadata.get('capture_time_from_filename')
+
+                    # 确定地点
+                    location = metadata.get('location_info')
+
                     if has_useful_info:
-                        updates.append((file_record.id, metadata))
+                        # 有信息，更新状态和相关字段
+                        status = SpatiotemporalAnalysisStatus.ANALYZED_HAS_INFO
+                        self.db_manager.update_spatiotemporal_status(
+                            file_record.id, status, original_created_time, location
+                        )
+                        # 同时更新metadata字段
+                        existing_metadata = file_record.metadata or {}
+                        existing_metadata.update(metadata)
+                        self.db_manager.update_file_metadata(file_record.id, existing_metadata)
                         updated += 1
+                    else:
+                        # 无信息，更新状态为"已分析无信息"
+                        status = SpatiotemporalAnalysisStatus.ANALYZED_NO_INFO
+                        self.db_manager.update_spatiotemporal_status(file_record.id, status)
 
                     # 更新进度
                     if processed % 10 == 0 or processed == total:
@@ -1069,14 +1096,11 @@ class ImageMetadataWorker(QThread):
                     errors += 1
                     print(f"[ImageMetadataWorker] 处理文件失败: {file_path}, 错误: {e}")
 
-            # 批量更新数据库
-            if updates:
-                self.db_manager.update_file_metadata_batch(updates)
-
             result = {
                 'processed': processed,
                 'updated': updated,
                 'errors': errors,
+                'skipped': skipped,
                 'cancelled': self._is_cancelled
             }
 
@@ -1108,8 +1132,9 @@ class ImageCaptionWorker(QThread):
     def run(self):
         """执行图片Caption和标签生成"""
         try:
-            from semantic_representation.image_caption_tagger import ImageCaptionTagger
+            from semantic_representation.image_caption_tagger import ImageCaptionTagger, is_image_format_supported, is_image_processable
             from models.model_manager import is_llm_available, get_llm_client
+            from database.database import CaptionAnalysisStatus
 
             # 检查LLM服务
             if not is_llm_available():
@@ -1120,19 +1145,23 @@ class ImageCaptionWorker(QThread):
             llm_client = get_llm_client()
             tagger = ImageCaptionTagger(llm_client)
 
-            # 获取待处理的图片文件
+            # 获取待处理的图片文件（仅状态为"待分析"的）
             if self.file_ids:
                 files = []
                 for file_id in self.file_ids:
                     record = self.db_manager.get_file_by_id(file_id)
-                    if record:
+                    if record and record.caption_analysis_status == CaptionAnalysisStatus.PENDING:
                         files.append(record)
             else:
-                files = self.db_manager.get_files_by_type('image')
+                # 获取所有待分析的图片类型文件
+                files = self.db_manager.get_files_by_caption_status(CaptionAnalysisStatus.PENDING)
+                # 过滤出图片类型
+                image_extensions = self.db_manager.FILE_TYPE_EXTENSIONS.get('image', set())
+                files = [f for f in files if f.file_type.lower() in image_extensions]
 
             total = len(files)
             if total == 0:
-                self.finished.emit({'processed': 0, 'updated': 0, 'errors': 0})
+                self.finished.emit({'processed': 0, 'updated': 0, 'errors': 0, 'skipped': 0})
                 return
 
             self.progress.emit(f"开始生成 {total} 个图片的Caption和标签...", 0, total)
@@ -1140,7 +1169,7 @@ class ImageCaptionWorker(QThread):
             processed = 0
             updated = 0
             errors = 0
-            updates = []
+            skipped = 0
 
             for file_record in files:
                 if self._is_cancelled:
@@ -1149,20 +1178,49 @@ class ImageCaptionWorker(QThread):
                 processed += 1
                 file_path = file_record.file_path
 
+                # 检查图片是否可处理（格式和大小）
+                can_process, process_error = is_image_processable(file_path)
+                if not can_process:
+                    # 不支持的格式或文件过大，更新状态为"不支持"
+                    self.db_manager.update_caption_status(
+                        file_record.id, CaptionAnalysisStatus.NOT_SUPPORTED
+                    )
+                    skipped += 1
+                    print(f"[ImageCaptionWorker] 跳过文件: {file_path}, 原因: {process_error}")
+                    continue
+
                 try:
                     # 生成Caption和标签
                     result = tagger.generate_caption_and_tags(file_path)
 
                     if result.get('success'):
-                        # 获取现有元数据
-                        existing_metadata = file_record.metadata or {}
-                        # 添加Caption和标签
-                        existing_metadata['caption'] = result.get('caption')
-                        existing_metadata['tags'] = result.get('tags', [])
+                        caption = result.get('caption')
+                        tags = result.get('tags', [])
 
-                        updates.append((file_record.id, existing_metadata))
-                        updated += 1
+                        # 判断是否有有效信息
+                        has_info = bool(caption or tags)
+
+                        if has_info:
+                            # 有信息，更新状态为"已分析有信息"
+                            status = CaptionAnalysisStatus.ANALYZED_HAS_INFO
+                            self.db_manager.update_caption_status(file_record.id, status)
+
+                            # 更新metadata
+                            existing_metadata = file_record.metadata or {}
+                            existing_metadata['caption'] = caption
+                            existing_metadata['tags'] = tags
+                            self.db_manager.update_file_metadata(file_record.id, existing_metadata)
+                            updated += 1
+                        else:
+                            # 无信息，更新状态为"已分析不成功"
+                            status = CaptionAnalysisStatus.ANALYZED_FAILED
+                            self.db_manager.update_caption_status(file_record.id, status)
+                            errors += 1
                     else:
+                        # 生成失败，更新状态为"已分析不成功"
+                        self.db_manager.update_caption_status(
+                            file_record.id, CaptionAnalysisStatus.ANALYZED_FAILED
+                        )
                         errors += 1
                         print(f"[ImageCaptionWorker] 生成失败: {file_path}, 错误: {result.get('error')}")
 
@@ -1175,16 +1233,17 @@ class ImageCaptionWorker(QThread):
 
                 except Exception as e:
                     errors += 1
+                    # 更新状态为"已分析不成功"
+                    self.db_manager.update_caption_status(
+                        file_record.id, CaptionAnalysisStatus.ANALYZED_FAILED
+                    )
                     print(f"[ImageCaptionWorker] 处理文件失败: {file_path}, 错误: {e}")
-
-            # 批量更新数据库
-            if updates:
-                self.db_manager.update_file_metadata_batch(updates)
 
             result = {
                 'processed': processed,
                 'updated': updated,
                 'errors': errors,
+                'skipped': skipped,
                 'cancelled': self._is_cancelled
             }
 
@@ -1519,13 +1578,6 @@ class MainWindow(QMainWindow):
 
         tools_menu.addSeparator()
 
-        # 设置
-        settings_action = QAction("设置...", self)
-        settings_action.triggered.connect(self.show_settings)
-        tools_menu.addAction(settings_action)
-
-        tools_menu.addSeparator()
-
         # 清空历史分析
         clear_history_action = QAction("清空历史分析", self)
         clear_history_action.triggered.connect(self.clear_analysis_history)
@@ -1540,7 +1592,16 @@ class MainWindow(QMainWindow):
         clear_classification_action = QAction("清空历史分类结果", self)
         clear_classification_action.triggered.connect(self.clear_classification_results_history)
         tools_menu.addAction(clear_classification_action)
-        
+
+        # 设置菜单（独立菜单项）
+        settings_menu = menubar.addMenu("设置(&S)")
+
+        settings_action = QAction("系统设置...", self)
+        settings_action.setShortcut("Ctrl+,")
+        settings_action.setToolTip("打开系统设置对话框")
+        settings_action.triggered.connect(self.show_settings)
+        settings_menu.addAction(settings_action)
+
         # 帮助菜单
         help_menu = menubar.addMenu("帮助(&H)")
         
@@ -2247,7 +2308,19 @@ class MainWindow(QMainWindow):
     
     def show_settings(self):
         """显示设置对话框"""
-        QMessageBox.information(self, "设置", "设置功能待实现")
+        from ui.settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(self._get_config_path(), self)
+        if dialog.exec_() == SettingsDialog.Accepted:
+            # 重新加载配置
+            self._load_config()
+            # 重新加载图片缩放配置
+            try:
+                from semantic_representation.image_caption_tagger import _load_max_dimension_from_config
+                _load_max_dimension_from_config()
+            except ImportError:
+                pass
+            self.statusbar.showMessage("设置已保存")
 
     def analyze_image_metadata(self):
         """分析图片时空元数据"""
@@ -2397,7 +2470,10 @@ class MainWindow(QMainWindow):
         processed = result.get('processed', 0)
         updated = result.get('updated', 0)
         errors = result.get('errors', 0)
+        skipped = result.get('skipped', 0)
         cancelled = result.get('cancelled', False)
+
+        skip_msg = f"\n跳过(不支持格式): {skipped} 个" if skipped > 0 else ""
 
         if cancelled:
             self.statusbar.showMessage("图片Caption生成已取消")
@@ -2405,7 +2481,7 @@ class MainWindow(QMainWindow):
                 self, "生成取消",
                 f"图片Caption生成已取消。\n"
                 f"已处理: {processed} 个文件\n"
-                f"已更新: {updated} 个文件"
+                f"已更新: {updated} 个文件{skip_msg}"
             )
         else:
             self.statusbar.showMessage(
@@ -2416,7 +2492,7 @@ class MainWindow(QMainWindow):
                 f"图片Caption和标签生成完成！\n\n"
                 f"处理文件: {processed} 个\n"
                 f"成功生成: {updated} 个\n"
-                f"处理错误: {errors} 个"
+                f"处理错误: {errors} 个{skip_msg}"
             )
 
         # 清理工作线程

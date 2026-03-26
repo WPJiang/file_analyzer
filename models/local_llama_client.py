@@ -58,14 +58,15 @@ class LocalLlamaClient:
             "Content-Type": "application/json"
         }
 
-    def _encode_image_to_base64(self, image_path: str) -> str:
+    def _encode_image_to_base64(self, image_path: str, include_data_uri: bool = False) -> str:
         """将图片编码为base64字符串
 
         Args:
             image_path: 图片文件路径
+            include_data_uri: 是否包含data URI前缀（llama.cpp通常不需要）
 
         Returns:
-            base64编码的图片字符串（带data URI前缀）
+            base64编码的图片字符串
         """
         with open(image_path, 'rb') as f:
             image_data = f.read()
@@ -78,12 +79,19 @@ class LocalLlamaClient:
             '.png': 'image/png',
             '.gif': 'image/gif',
             '.webp': 'image/webp',
-            '.bmp': 'image/bmp'
+            '.bmp': 'image/bmp',
+            '.heic': 'image/heic',
+            '.heif': 'image/heif'
         }
         mime_type = mime_types.get(ext, 'image/jpeg')
 
         base64_data = base64.b64encode(image_data).decode('utf-8')
-        return f"data:{mime_type};base64,{base64_data}"
+
+        if include_data_uri:
+            return f"data:{mime_type};base64,{base64_data}"
+        else:
+            # llama.cpp通常只需要纯base64
+            return base64_data
 
     def _call_chat_api(self, system_prompt: str, user_message: str, images: List[str] = None, stream: bool = False) -> Dict[str, Any]:
         """调用Chat API
@@ -91,7 +99,7 @@ class LocalLlamaClient:
         Args:
             system_prompt: 系统提示词
             user_message: 用户消息
-            images: base64编码的图片列表
+            images: base64编码的图片列表（纯base64，不含data URI前缀）
             stream: 是否流式输出
 
         Returns:
@@ -110,12 +118,18 @@ class LocalLlamaClient:
 
         # 添加用户消息
         if images:
-            # 多模态消息格式
+            # llama.cpp多模态格式 - 使用content数组
             content = [{"type": "text", "text": user_message}]
             for image_data in images:
+                # 检查是否已经是完整的data URI格式
+                if image_data.startswith('data:'):
+                    image_url = image_data
+                else:
+                    # 纯base64，添加前缀
+                    image_url = f"data:image/jpeg;base64,{image_data}"
                 content.append({
                     "type": "image_url",
-                    "image_url": {"url": image_data}
+                    "image_url": {"url": image_url}
                 })
             messages.append({
                 "role": "user",
@@ -165,8 +179,15 @@ class LocalLlamaClient:
             else:
                 result = response.json()
                 if "choices" in result and len(result["choices"]) > 0:
-                    content = result["choices"][0].get("message", {}).get("content", "")
-                    return {"response": content}
+                    message = result["choices"][0].get("message", {})
+                    content = message.get("content", "")
+                    # Qwen3.5等模型可能使用reasoning_content字段（思考链模式）
+                    reasoning_content = message.get("reasoning_content", "")
+                    return {
+                        "response": content if content else reasoning_content,
+                        "content": content,
+                        "reasoning_content": reasoning_content
+                    }
                 return {"response": ""}
 
         except requests.exceptions.ConnectionError:
@@ -179,6 +200,20 @@ class LocalLlamaClient:
                 error_detail = response.json()
             except:
                 pass
+
+            # 检查是否是图片不支持的错误，提供详细提示
+            error_msg = str(error_detail) if error_detail else str(e)
+            if 'image input is not supported' in error_msg or 'mmproj' in error_msg:
+                raise RuntimeError(
+                    f"llama.cpp服务器不支持图片输入。\n\n"
+                    f"要启用多模态支持，请在启动llama-server时添加--mmproj参数：\n"
+                    f"  llama-server.exe -m model.gguf --mmproj mmproj.gguf --port 11435\n\n"
+                    f"请确保：\n"
+                    f"  1. 使用支持视觉的模型（如Qwen-VL、LLaVA等）\n"
+                    f"  2. 下载对应的mmproj模型文件\n"
+                    f"  3. 启动时指定--mmproj参数\n\n"
+                    f"原始错误: {error_msg}"
+                )
             raise RuntimeError(f"本地llama API调用失败: {str(e)}, 详情: {error_detail}")
         except requests.exceptions.RequestException as e:
             raise RuntimeError(f"本地llama API调用失败: {str(e)}")

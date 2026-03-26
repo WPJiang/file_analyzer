@@ -133,9 +133,21 @@ class OllamaClient:
             "role": "user",
             "content": user_message
         }
-        # 图片附加到用户消息
+        # 图片附加到用户消息（Ollama期望纯base64，不带data URI前缀）
         if images:
-            user_message_obj["images"] = images
+            # 处理可能包含data URI前缀的图片数据
+            pure_base64_images = []
+            for img in images:
+                if img.startswith('data:'):
+                    # 提取base64部分
+                    base64_part = img.split(',', 1)
+                    if len(base64_part) > 1:
+                        pure_base64_images.append(base64_part[1])
+                    else:
+                        pure_base64_images.append(img)
+                else:
+                    pure_base64_images.append(img)
+            user_message_obj["images"] = pure_base64_images
         messages.append(user_message_obj)
 
         payload = {

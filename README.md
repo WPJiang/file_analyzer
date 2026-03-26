@@ -119,6 +119,57 @@ for block in semantic_blocks:
 
 ## 配置说明
 
+### LLM 配置
+
+本项目支持三种 LLM 后端：
+
+1. **本地 llama.cpp**：通过 OpenAI 兼容 API 连接本地 llama.cpp 服务器
+2. **Ollama**：连接本地 Ollama 服务
+3. **云侧 API**：支持阿里云通义千问、DeepSeek 等 OpenAI 兼容 API
+
+在设置菜单中可以切换 LLM 类型和配置参数。
+
+### 云侧 API 配置
+
+云侧 API 的配置存储在 `api_config.json` 文件中，该文件包含敏感信息（如 API Key），**不会提交到 Git 仓库**。
+
+首次使用云侧 API 功能时，请按以下步骤配置：
+
+1. 复制 `api_config_example.json` 为 `api_config.json`
+2. 编辑 `api_config.json`，填入您的 API Key 和相关配置：
+
+```json
+{
+    "api_key": "your-api-key-here",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "model": "qwen-vl-plus",
+    "vision_model": "qwen-vl-max",
+    "timeout": 120,
+    "max_tokens": 4096,
+    "temperature": 0.7
+}
+```
+
+**配置项说明：**
+
+| 参数 | 说明 |
+|------|------|
+| `api_key` | 云服务商提供的 API 密钥 |
+| `base_url` | API 服务地址 |
+| `model` | 文本生成模型名称 |
+| `vision_model` | 视觉模型名称（用于图片分析） |
+| `timeout` | 请求超时时间（秒） |
+| `max_tokens` | 最大输出 Token 数 |
+| `temperature` | 生成温度参数 |
+
+**支持的云服务商：**
+
+- 阿里云通义千问：`https://dashscope.aliyuncs.com/compatible-mode/v1`
+- 智谱 AI：`https://open.bigmodel.cn/api/paas/v4`
+- DeepSeek：`https://api.deepseek.com/v1`
+
+> **注意**：您也可以通过 GUI 界面的"设置"菜单直接配置云侧 API 参数，保存后会自动更新 `api_config.json` 文件。
+
 ### 语义表征配置
 
 ```python

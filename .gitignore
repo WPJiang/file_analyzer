@@ -114,6 +114,7 @@ cache/
 test_data/
 data_test_debug/
 *.db
+api_config.json
 
 # Large files
 *.pth

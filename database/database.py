@@ -15,6 +15,24 @@ class FileStatus(IntEnum):
     DEEP = 3  # 深入分析（全文文本索引）
 
 
+class SpatiotemporalAnalysisStatus:
+    """时空分析状态"""
+    EMPTY = ""  # 非图片文件，默认为空
+    PENDING = "待分析"  # 图片文件，初始化为待分析
+    NOT_SUPPORTED = "不支持"  # 不支持的图片格式
+    ANALYZED_NO_INFO = "已分析无信息"  # 支持但无信息
+    ANALYZED_HAS_INFO = "已分析有信息"  # 提取到至少一个信息
+
+
+class CaptionAnalysisStatus:
+    """Caption打标状态"""
+    EMPTY = ""  # 非图片文件，默认为空
+    PENDING = "待分析"  # 图片文件，初始化为待分析
+    NOT_SUPPORTED = "不支持"  # 不支持的图片格式
+    ANALYZED_FAILED = "已分析不成功"  # caption和标签都没生成
+    ANALYZED_HAS_INFO = "已分析有信息"  # 提取到至少一个
+
+
 @dataclass
 class FileRecord:
     """文件表记录"""
@@ -31,6 +49,10 @@ class FileRecord:
     added_time: datetime
     semantic_filename: Optional[str] = None  # 语义文件名（用于搜索）
     metadata: Optional[Dict[str, Any]] = None  # 文件元数据（拍摄时间、地点等）
+    spatiotemporal_analysis_status: str = ""  # 时空分析状态
+    original_created_time: Optional[str] = None  # 原文件创建时间
+    location: Optional[str] = None  # 地点
+    caption_analysis_status: str = ""  # Caption打标状态
 
 
 @dataclass
@@ -138,7 +160,11 @@ class DatabaseManager:
                 directory_path TEXT NOT NULL,
                 added_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 semantic_filename TEXT,  -- 语义文件名（用于搜索）
-                metadata TEXT  -- 文件元数据（JSON格式，包含拍摄时间、地点等）
+                metadata TEXT,  -- 文件元数据（JSON格式，包含拍摄时间、地点等）
+                spatiotemporal_analysis_status TEXT DEFAULT '',  -- 时空分析状态
+                original_created_time TEXT,  -- 原文件创建时间
+                location TEXT,  -- 地点
+                caption_analysis_status TEXT DEFAULT ''  -- Caption打标状态
             )
         ''')
         
@@ -236,20 +262,29 @@ class DatabaseManager:
         """添加文件记录"""
         conn = self._get_connection()
         cursor = conn.cursor()
-        
+
+        # 判断是否是图片文件
+        is_image = file_type.lower() in self.FILE_TYPE_EXTENSIONS.get('image', set())
+
+        # 初始化时空分析和caption状态
+        spatiotemporal_status = SpatiotemporalAnalysisStatus.PENDING if is_image else SpatiotemporalAnalysisStatus.EMPTY
+        caption_status = CaptionAnalysisStatus.PENDING if is_image else CaptionAnalysisStatus.EMPTY
+
         try:
             cursor.execute('''
-                INSERT OR IGNORE INTO files 
-                (file_path, file_name, file_size, file_type, modified_time, created_time, 
-                 analysis_status, semantic_categories, directory_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR IGNORE INTO files
+                (file_path, file_name, file_size, file_type, modified_time, created_time,
+                 analysis_status, semantic_categories, directory_path,
+                 spatiotemporal_analysis_status, caption_analysis_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 file_path, file_name, file_size, file_type,
                 modified_time, created_time,
-                FileStatus.PENDING.value, json.dumps([]), directory_path
+                FileStatus.PENDING.value, json.dumps([]), directory_path,
+                spatiotemporal_status, caption_status
             ))
             conn.commit()
-            
+
             cursor.execute('SELECT id FROM files WHERE file_path = ?', (file_path,))
             row = cursor.fetchone()
             return row['id'] if row else -1
@@ -261,30 +296,41 @@ class DatabaseManager:
         """批量添加文件"""
         conn = self._get_connection()
         cursor = conn.cursor()
-        
+
         count = 0
         for file_info in files:
             try:
+                file_type = file_info.get('file_type', '')
+                # 判断是否是图片文件
+                is_image = file_type.lower() in self.FILE_TYPE_EXTENSIONS.get('image', set())
+
+                # 初始化时空分析和caption状态
+                spatiotemporal_status = SpatiotemporalAnalysisStatus.PENDING if is_image else SpatiotemporalAnalysisStatus.EMPTY
+                caption_status = CaptionAnalysisStatus.PENDING if is_image else CaptionAnalysisStatus.EMPTY
+
                 cursor.execute('''
-                    INSERT OR IGNORE INTO files 
-                    (file_path, file_name, file_size, file_type, modified_time, created_time, 
-                     analysis_status, semantic_categories, directory_path)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR IGNORE INTO files
+                    (file_path, file_name, file_size, file_type, modified_time, created_time,
+                     analysis_status, semantic_categories, directory_path,
+                     spatiotemporal_analysis_status, caption_analysis_status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     file_info['file_path'],
                     file_info['file_name'],
                     file_info.get('file_size', 0),
-                    file_info.get('file_type', ''),
+                    file_type,
                     file_info.get('modified_time'),
                     file_info.get('created_time'),
                     FileStatus.PENDING.value,
                     json.dumps([]),
-                    file_info.get('directory_path', '')
+                    file_info.get('directory_path', ''),
+                    spatiotemporal_status,
+                    caption_status
                 ))
                 count += 1
             except Exception as e:
                 print(f"添加文件失败 {file_info.get('file_path')}: {e}")
-        
+
         conn.commit()
         return count
     
@@ -498,6 +544,102 @@ class DatabaseManager:
 
         return count
 
+    def update_spatiotemporal_status(self, file_id: int, status: str,
+                                      original_created_time: Optional[str] = None,
+                                      location: Optional[str] = None) -> bool:
+        """更新时空分析状态及相关字段
+
+        Args:
+            file_id: 文件ID
+            status: 状态值
+            original_created_time: 原文件创建时间（可选）
+            location: 地点（可选）
+
+        Returns:
+            是否更新成功
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                UPDATE files
+                SET spatiotemporal_analysis_status = ?,
+                    original_created_time = COALESCE(?, original_created_time),
+                    location = COALESCE(?, location)
+                WHERE id = ?
+            ''', (status, original_created_time, location, file_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"更新时空分析状态失败: {e}")
+            return False
+
+    def update_caption_status(self, file_id: int, status: str) -> bool:
+        """更新Caption分析状态
+
+        Args:
+            file_id: 文件ID
+            status: 状态值
+
+        Returns:
+            是否更新成功
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                UPDATE files SET caption_analysis_status = ? WHERE id = ?
+            ''', (status, file_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"更新Caption分析状态失败: {e}")
+            return False
+
+    def get_files_by_spatiotemporal_status(self, status: str) -> List[FileRecord]:
+        """根据时空分析状态获取文件列表
+
+        Args:
+            status: 状态值
+
+        Returns:
+            文件记录列表
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT * FROM files
+            WHERE spatiotemporal_analysis_status = ?
+            ORDER BY added_time
+        ''', (status,))
+
+        rows = cursor.fetchall()
+        return [self._row_to_file_record(row) for row in rows]
+
+    def get_files_by_caption_status(self, status: str) -> List[FileRecord]:
+        """根据Caption分析状态获取文件列表
+
+        Args:
+            status: 状态值
+
+        Returns:
+            文件记录列表
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT * FROM files
+            WHERE caption_analysis_status = ?
+            ORDER BY added_time
+        ''', (status,))
+
+        rows = cursor.fetchall()
+        return [self._row_to_file_record(row) for row in rows]
+
     def _row_to_file_record(self, row: sqlite3.Row) -> FileRecord:
         """将数据库行转换为FileRecord"""
         # 获取semantic_filename，如果列不存在则返回None
@@ -513,6 +655,27 @@ class DatabaseManager:
         except (KeyError, IndexError, json.JSONDecodeError):
             metadata = None
 
+        # 获取新增字段
+        try:
+            spatiotemporal_analysis_status = row['spatiotemporal_analysis_status'] if 'spatiotemporal_analysis_status' in row.keys() else ''
+        except (KeyError, IndexError):
+            spatiotemporal_analysis_status = ''
+
+        try:
+            original_created_time = row['original_created_time'] if 'original_created_time' in row.keys() else None
+        except (KeyError, IndexError):
+            original_created_time = None
+
+        try:
+            location = row['location'] if 'location' in row.keys() else None
+        except (KeyError, IndexError):
+            location = None
+
+        try:
+            caption_analysis_status = row['caption_analysis_status'] if 'caption_analysis_status' in row.keys() else ''
+        except (KeyError, IndexError):
+            caption_analysis_status = ''
+
         return FileRecord(
             id=row['id'],
             file_path=row['file_path'],
@@ -526,7 +689,11 @@ class DatabaseManager:
             directory_path=row['directory_path'],
             added_time=row['added_time'],
             semantic_filename=semantic_filename,
-            metadata=metadata
+            metadata=metadata,
+            spatiotemporal_analysis_status=spatiotemporal_analysis_status,
+            original_created_time=original_created_time,
+            location=location,
+            caption_analysis_status=caption_analysis_status
         )
     
     # ==================== 数据块表操作 ====================

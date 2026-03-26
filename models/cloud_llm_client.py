@@ -43,7 +43,8 @@ class CloudLLMClient:
             self.model = model or config.get('model', 'gpt-4o')
             self.vision_model = config.get('vision_model', self.model)
             self.timeout = config.get('timeout', 120)
-            self.max_tokens = config.get('max_tokens', 2048)
+            # 限制 max_tokens 最大为 32768（部分模型限制）
+            self.max_tokens = min(config.get('max_tokens', 2048), 32768)
             self.temperature = config.get('temperature', 0.7)
         else:
             self.api_key = api_key or os.environ.get('OPENAI_API_KEY', '')
