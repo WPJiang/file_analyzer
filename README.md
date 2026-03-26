@@ -1,30 +1,25 @@
-# File Analyzer 项目
+# File Analyzer - 文件分析管理器
 
 ## 项目简介
 
-File Analyzer 是一个多功能文件分析工程，支持多种文件格式（PPT、Word、PDF、WAV、JPG等）的解析和分析。通过数据解析、语义表征、语义相似度计算和语义聚类等模块，实现对不同模态文件的统一处理和分析。
+File Analyzer 是一个多功能文件分析管理工具，支持多种文件格式（PPT、Word、PDF、图片、音频等）的解析、语义分析和智能分类。通过 GUI 界面提供直观的文件管理和分析功能。
 
 ### 主要功能
 
-- **多格式文件解析**：支持PPT、Word、PDF、WAV、JPG等多种文件格式的解析
-- **语义表征**：将不同模态的数据转化为统一的语义表示（文本描述、关键词、语义向量）
-- **语义相似度计算**：融合向量相似度、BM25分数和关键词相似度
-- **语义聚类**：基于预定义语义类别进行聚类分析
-
-## 系统架构
-
-本项目采用模块化设计，主要包含以下核心模块：
-
-1. **数据解析模块**：解析不同格式文件为统一数据块
-2. **语义表征模块**：生成文本描述、关键词和语义向量
-3. **语义相似度计算模块**：计算不同语义块之间的相似度
-4. **语义聚类模块**：基于预定义类别进行语义聚类
+- **多格式文件解析**：支持 PDF、Word、PPT、图片（JPG/PNG/GIF/HEIC 等）、音频等格式
+- **语义表征**：将文件内容转化为统一的语义表示（文本描述、关键词、语义向量）
+- **语义搜索**：基于自然语言描述搜索相关文件
+- **智能分类**：基于预定义类别或自动生成的类别进行文件分类
+- **图片分析**：
+  - 时空元数据提取（拍摄时间、GPS 位置）
+  - Caption 和标签生成（基于 LLM）
+- **多 LLM 后端支持**：本地 llama.cpp、Ollama、云侧 API
 
 ## 快速开始
 
 ### 环境要求
 
-- Python 3.8+
+- Python 3.10
 - Conda（推荐）
 
 ### 安装步骤
@@ -32,111 +27,205 @@ File Analyzer 是一个多功能文件分析工程，支持多种文件格式（
 1. **创建虚拟环境**
 
 ```bash
-# 创建虚拟环境
-conda create -n file_analyzer python=3.8
-
-# 激活虚拟环境
+conda create -n file_analyzer python=3.10
 conda activate file_analyzer
 ```
 
 2. **安装依赖**
 
 ```bash
-# 安装项目依赖
 pip install -r requirements.txt
 ```
 
-### 基本用法
+3. **配置云侧 API（可选）**
 
-```python
-from file_analyzer import DataParser, SemanticRepresentation, SemanticSimilarity, SemanticClustering
+如需使用云侧 LLM 功能，复制配置模板并填入 API Key：
 
-# 1. 解析文件
-parser = DataParser()
-data_blocks = parser.parse('example.pdf')
-
-# 2. 生成语义表征
-rep = SemanticRepresentation()
-semantic_blocks = rep.represent_batch(data_blocks)
-
-# 3. 计算相似度
-sim = SemanticSimilarity()
-sim.fit(semantic_blocks)
-query_block = semantic_blocks[0]
-similarity_results = sim.search(query_block, top_k=5)
-
-# 4. 聚类分析
-cluster = SemanticClustering()
-for block in semantic_blocks:
-    result = cluster.cluster(block)
-    print(f"Block {block.block_id} clustered to: {result.category_name}")
+```bash
+cp api_config_example.json api_config.json
+# 编辑 api_config.json，填入您的 API Key
 ```
 
-## 模块详情
+### 启动程序
 
-### 数据解析模块
+**主程序入口**：`ui/main_window.py`
 
-支持以下文件格式：
+```bash
+# 方式一：直接运行启动脚本
+python simple_launch.py
 
-| 格式 | 扩展名 | 解析器类 |
-|------|--------|----------|
-| PDF | .pdf | PDFParser |
-| Word | .doc, .docx | WordParser |
-| PowerPoint | .ppt, .pptx | PPTParser |
-| 图片 | .jpg, .jpeg, .png, .gif | ImageParser |
-| 音频 | .wav, .mp3 | AudioParser |
+# 方式二：作为模块运行
+python -c "from ui.main_window import MainWindow; from PyQt5.QtWidgets import QApplication; import sys; app = QApplication(sys.argv); w = MainWindow(); w.show(); sys.exit(app.exec_())"
+```
 
-### 语义表征模块
+## GUI 界面说明
 
-支持以下语义向量生成模型：
+### 界面布局
 
-| 模型名称 | 库 | 默认模型 | 特点 |
-|---------|------|----------|------|
-| SentenceTransformer | sentence-transformers | paraphrase-multilingual-MiniLM-L12-v2 | 支持多语言 |
-| Text2Vec | text2vec | shibing624/text2vec-base-chinese | 针对中文优化 |
-| OpenAI | openai | text-embedding-ada-002 | 需要API密钥 |
+程序采用三栏布局：
 
-### 语义相似度计算模块
+| 区域 | 功能 |
+|------|------|
+| **左侧 - 推荐面板** | 显示相似文件推荐，基于当前选中文件进行语义相似度匹配 |
+| **中间 - 预览面板** | 文件内容预览，支持文本、图片、PDF 等多种格式预览 |
+| **右侧 - 分类面板** | 三个子标签页：类别体系、分类结果、搜索功能 |
 
-融合以下相似度计算方法：
+### 顶部工具栏
 
-- **向量相似度**：使用余弦相似度计算语义向量之间的相似度
-- **BM25分数**：基于文本的BM25算法计算相似度
-- **关键词相似度**：使用Jaccard相似度计算关键词之间的相似度
-- **融合相似度**：加权融合以上三种相似度
+工具栏提供以下操作按钮：
 
-### 语义聚类模块
+| 按钮 | 功能 |
+|------|------|
+| **目录选择** | 选择要扫描的文件夹 |
+| **解析** | 解析选中目录中的文件，提取文本内容 |
+| **语义表征** | 生成语义向量、关键词、描述文本 |
+| **分类** | 将文件分类到预定义类别中 |
 
-预定义语义类别：
+### 菜单栏
 
-| 类别名称 | 描述 | 关键词 |
-|---------|------|--------|
-| 技术文档 | 技术规范、API文档、技术手册等 | 技术、API、接口、开发、代码、系统、架构、配置、部署、服务器 |
-| 业务文档 | 业务流程、需求文档、市场分析等 | 业务、流程、需求、市场、分析、方案、策略、规划、运营、管理 |
-| 财务文档 | 财务报表、预算、审计报告等 | 财务、报表、预算、审计、成本、收益、利润、投资、税务、资金 |
-| 人事文档 | 招聘、培训、绩效考核等 | 人事、招聘、培训、绩效、考核、薪资、福利、晋升、离职、考勤 |
-| 法律文档 | 合同、协议、法规等 | 法律、合同、协议、法规、条款、权利、义务、责任、纠纷、诉讼 |
+#### 文件菜单
+
+| 菜单项 | 快捷键 | 功能 |
+|--------|--------|------|
+| 打开目录... | Ctrl+O | 选择并扫描目录 |
+| 扫描默认目录 | Ctrl+D | 扫描预设的默认目录 |
+| 退出 | Ctrl+Q | 退出程序 |
+
+#### 工具菜单
+
+| 菜单项 | 功能 |
+|--------|------|
+| 自动获取预定义类别 | 从目录结构自动生成分类类别 |
+| 图片时空数据分析 | 提取图片的拍摄时间、GPS 位置等元数据 |
+| 图片 Caption 和标签生成 | 使用 LLM 为图片生成描述和标签 |
+| 清空历史分析 | 清空所有分析数据 |
+| 清空历史分析(仅保留类别体系) | 清空分析数据但保留类别定义 |
+| 清空历史分类结果 | 仅清空分类结果 |
+
+#### 设置菜单
+
+| 菜单项 | 快捷键 | 功能 |
+|--------|--------|------|
+| 系统设置... | Ctrl+, | 打开设置对话框 |
+
+### 设置对话框
+
+#### LLM 设置
+
+选择 LLM 后端类型：
+
+1. **本地 llama.cpp**：连接本地 llama.cpp 服务器
+   - 服务地址：默认 `http://127.0.0.1:11435/v1`
+   - 模型名称：如 `qwen3.5-0.8b`
+
+2. **Ollama 服务**：连接本地 Ollama
+   - 服务地址：默认 `http://localhost:11434`
+   - 模型名称：如 `qwen3.5:0.8b`
+
+3. **云侧 API**：使用云服务商 API
+   - API Key：您的 API 密钥
+   - API 地址：如阿里云 `https://dashscope.aliyuncs.com/compatible-mode/v1`
+   - 模型名称：如 `qwen-vl-plus`
+
+#### 图片处理设置
+
+- 图片缩放尺寸：224（快速）/ 448（平衡）/ 896（高质量）
+- OCR 最大宽度：控制 OCR 处理时的图片缩放
+
+#### 语义分析设置
+
+- 分类方法：相似度分类 / 聚类分类 / LLM 分类
+- Embedding 模型选择
+- 检索参数（Top K、Top M）
+
+### 操作流程
+
+1. **扫描目录**：点击"打开目录"选择包含文件的文件夹
+2. **解析文件**：点击"解析"按钮提取文件内容
+3. **语义表征**：点击"语义表征"生成语义向量
+4. **分类文件**：点击"分类"将文件归类
+5. **搜索文件**：在搜索框输入自然语言描述，搜索相关文件
+
+## Windows 打包指南
+
+### 方式一：使用 PyInstaller
+
+1. **安装 PyInstaller**
+
+```bash
+pip install pyinstaller
+```
+
+2. **打包命令**
+
+```bash
+pyinstaller --name "文件分析管理器" ^
+    --windowed ^
+    --onefile ^
+    --add-data "config.json;." ^
+    --add-data "api_config_example.json;." ^
+    --hidden-import=torch ^
+    --hidden-import=transformers ^
+    --hidden-import=sentence_transformers ^
+    --collect-all paddleocr ^
+    --collect-all paddlepaddle ^
+    simple_launch.py
+```
+
+3. **输出位置**
+
+打包完成后，可执行文件位于 `dist/文件分析管理器.exe`
+
+### 方式二：使用 PyInstaller（目录模式，推荐）
+
+目录模式启动更快，便于调试：
+
+```bash
+pyinstaller --name "文件分析管理器" ^
+    --windowed ^
+    --add-data "config.json;." ^
+    --add-data "api_config_example.json;." ^
+    --hidden-import=torch ^
+    --hidden-import=transformers ^
+    --hidden-import=sentence_transformers ^
+    --collect-all paddleocr ^
+    --collect-all paddlepaddle ^
+    simple_launch.py
+```
+
+输出目录：`dist/文件分析管理器/`
+
+### 方式三：使用 Nuitka（更小体积）
+
+```bash
+pip install nuitka
+
+python -m nuitka ^
+    --standalone ^
+    --windows-console-mode=disable ^
+    --enable-plugin=pyqt5 ^
+    --include-data-file=config.json=. ^
+    --include-data-file=api_config_example.json=. ^
+    simple_launch.py
+```
+
+### 打包注意事项
+
+1. **配置文件**：确保 `config.json` 和 `api_config_example.json` 打包到可执行文件同目录
+
+2. **首次运行**：打包后首次运行需要复制 `api_config_example.json` 为 `api_config.json` 并配置 API Key
+
+3. **大模型处理**：PaddleOCR 和 Sentence-Transformers 模型较大，首次加载较慢
+
+4. **排除敏感文件**：确保 `api_config.json` 已添加到 `.gitignore`，不要打包真实的 API Key
+
+5. **依赖问题**：如遇到模块导入错误，使用 `--hidden-import` 添加隐藏导入
 
 ## 配置说明
 
-### LLM 配置
-
-本项目支持三种 LLM 后端：
-
-1. **本地 llama.cpp**：通过 OpenAI 兼容 API 连接本地 llama.cpp 服务器
-2. **Ollama**：连接本地 Ollama 服务
-3. **云侧 API**：支持阿里云通义千问、DeepSeek 等 OpenAI 兼容 API
-
-在设置菜单中可以切换 LLM 类型和配置参数。
-
 ### 云侧 API 配置
 
-云侧 API 的配置存储在 `api_config.json` 文件中，该文件包含敏感信息（如 API Key），**不会提交到 Git 仓库**。
-
-首次使用云侧 API 功能时，请按以下步骤配置：
-
-1. 复制 `api_config_example.json` 为 `api_config.json`
-2. 编辑 `api_config.json`，填入您的 API Key 和相关配置：
+配置文件：`api_config.json`（不提交到 Git）
 
 ```json
 {
@@ -150,135 +239,74 @@ for block in semantic_blocks:
 }
 ```
 
-**配置项说明：**
+**支持的云服务商**：
 
-| 参数 | 说明 |
-|------|------|
-| `api_key` | 云服务商提供的 API 密钥 |
-| `base_url` | API 服务地址 |
-| `model` | 文本生成模型名称 |
-| `vision_model` | 视觉模型名称（用于图片分析） |
-| `timeout` | 请求超时时间（秒） |
-| `max_tokens` | 最大输出 Token 数 |
-| `temperature` | 生成温度参数 |
+| 服务商 | API 地址 |
+|--------|----------|
+| 阿里云通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| 智谱 AI | `https://open.bigmodel.cn/api/paas/v4` |
+| DeepSeek | `https://api.deepseek.com/v1` |
 
-**支持的云服务商：**
+### 主配置文件
 
-- 阿里云通义千问：`https://dashscope.aliyuncs.com/compatible-mode/v1`
-- 智谱 AI：`https://open.bigmodel.cn/api/paas/v4`
-- DeepSeek：`https://api.deepseek.com/v1`
+配置文件：`config.json`
 
-> **注意**：您也可以通过 GUI 界面的"设置"菜单直接配置云侧 API 参数，保存后会自动更新 `api_config.json` 文件。
-
-### 语义表征配置
-
-```python
-config = {
-    'embedding': {
-        'type': 'sentence_transformer',  # 可选: sentence_transformer, text2vec, openai
-        'model_name': 'paraphrase-multilingual-MiniLM-L12-v2'  # 模型名称
+```json
+{
+    "llm": {
+        "type": "cloud",
+        "cloud": {
+            "config_file": "api_config.json"
+        }
     },
-    'keyword': {
-        'method': 'jieba',  # 关键词提取方法
-        'top_k': 10  # 关键词提取数量
+    "image_processing": {
+        "max_dimension": 448
     },
-    'description': {
-        'max_length': 512  # 文本描述最大长度
+    "classification": {
+        "method": "similarity"
     }
 }
-
-rep = SemanticRepresentation(config)
 ```
 
-### 语义相似度配置
+## 项目结构
 
-```python
-config = {
-    'fusion': {
-        'vector_weight': 0.4,  # 向量相似度权重
-        'bm25_weight': 0.4,  # BM25分数权重
-        'keyword_weight': 0.2  # 关键词相似度权重
-    },
-    'bm25': {
-        'k1': 1.5,  # BM25参数
-        'b': 0.75  # BM25参数
-    }
-}
-
-sim = SemanticSimilarity(config)
 ```
-
-## 测试
-
-运行测试脚本验证功能：
-
-```bash
-# 运行基本测试
-python file_analyzer/tests/run_test.py
-
-# 运行完整测试
-python file_analyzer/tests/test_all.py
-
-# 测试语义向量生成
-python test_semantic_vector.py
+file_analyzer/
+├── ui/                     # GUI 界面模块
+│   ├── main_window.py      # 主窗口（程序入口）
+│   ├── preview_panel.py    # 预览面板
+│   ├── search_panel.py     # 搜索面板
+│   ├── classification_panel.py
+│   ├── recommendation_panel.py
+│   └── settings_dialog.py  # 设置对话框
+├── database/               # 数据库模块
+├── data_parser/            # 文件解析模块
+├── semantic_representation/ # 语义表征模块
+├── models/                 # LLM 模型客户端
+├── directory_scanner/      # 目录扫描模块
+├── config.json             # 主配置文件
+├── api_config.json         # API 配置（不提交）
+├── api_config_example.json # API 配置示例
+├── simple_launch.py        # 启动脚本
+└── requirements.txt        # 依赖列表
 ```
-
-## 扩展指南
-
-### 扩展文件格式
-
-1. 继承 `BaseParser` 类
-2. 实现 `parse` 方法
-3. 在 `DataParser` 中注册新的解析器
-
-### 扩展语义向量模型
-
-1. 继承 `EmbeddingModel` 类
-2. 实现 `encode` 和 `encode_single` 方法
-3. 在 `SemanticRepresentation._init_embedding_model` 中添加新模型类型
-
-### 扩展语义类别
-
-1. 创建 `SemanticCategory` 实例
-2. 在 `SemanticClustering` 初始化时传入自定义类别列表
-
-## 性能优化
-
-- **模型加载**：语义向量模型首次加载较慢，建议在应用启动时预加载
-- **批量处理**：对于大量文件，使用批量处理方法（如 `represent_batch`）提高效率
-- **缓存**：对于重复处理的文件，建议缓存解析结果和语义表征
-- **并行处理**：对于大规模文件分析，考虑使用多线程或多进程并行处理
-
-## 应用场景
-
-- **文档管理系统**：自动分类和组织文档
-- **信息检索**：基于语义的文档搜索
-- **知识图谱构建**：从文档中提取知识
-- **智能问答系统**：基于文档内容回答问题
-- **内容推荐**：基于语义相似度推荐相关文档
 
 ## 依赖说明
 
-主要依赖包：
+主要依赖包（详见 requirements.txt）：
 
-- sentence-transformers：语义向量生成
-- jieba：中文分词
-- numpy：数值计算
-- pdfplumber：PDF解析
-- python-pptx：PPT解析
-- python-docx：Word解析
-- Pillow：图片处理
-- pydub：音频处理
-
-## 版本信息
-
-- **版本**：1.0.0
-- **更新日期**：2026-02-27
+| 包名 | 用途 |
+|------|------|
+| PyQt5 | GUI 界面 |
+| sentence-transformers | 语义向量生成 |
+| pdfplumber | PDF 解析 |
+| python-docx | Word 解析 |
+| python-pptx | PPT 解析 |
+| Pillow | 图片处理 |
+| paddleocr | OCR 识别 |
+| exifread | EXIF 元数据提取 |
+| openai | OpenAI 兼容 API 客户端 |
 
 ## 许可证
 
 本项目采用 MIT 许可证。
-
-## 联系方式
-
-如有问题或建议，请联系项目维护者。

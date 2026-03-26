@@ -37,13 +37,13 @@ class LocalLlamaClient:
             self.base_url = (base_url or config.get('base_url', 'http://127.0.0.1:11435/v1')).rstrip('/')
             self.model = model or config.get('model', 'qwen3.5-0.8b')
             self.timeout = config.get('timeout', 300)
-            self.max_tokens = config.get('max_tokens', 2048)
+            self.max_tokens = config.get('max_tokens', 8192)
             self.temperature = config.get('temperature', 0.7)
         else:
             self.base_url = (base_url or 'http://127.0.0.1:11435/v1').rstrip('/')
             self.model = model or 'qwen3.5-0.8b'
             self.timeout = 300
-            self.max_tokens = 2048
+            self.max_tokens = 8192
             self.temperature = 0.7
 
         self._initialized = True
