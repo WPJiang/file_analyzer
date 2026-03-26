@@ -825,9 +825,17 @@ class SemanticRepresentation:
         # 判断图片来源：是否为图片文件（而非PDF/PPT/Word中的图片）
         is_image_file = False
         if is_image and hasattr(block, 'metadata') and block.metadata:
-            source = block.metadata.get('source', '')
-            is_image_file = source == 'image_parser'
-            processing_logger.log_step("图片来源判断", f"source={source}, is_image_file={is_image_file}")
+            # metadata 可能是字符串（JSON）或字典
+            metadata = block.metadata
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except (json.JSONDecodeError, TypeError):
+                    metadata = {}
+            if isinstance(metadata, dict):
+                source = metadata.get('source', '')
+                is_image_file = source == 'image_parser'
+                processing_logger.log_step("图片来源判断", f"source={source}, is_image_file={is_image_file}")
 
         # 获取图片文本提取方式配置
         image_extraction_method = self.config.get('image_processing', {}).get('image_text_extraction_method', 'caption')
