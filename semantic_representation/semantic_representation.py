@@ -1,5 +1,6 @@
 import re
 import os
+import json
 from typing import List, Optional, Dict, Any, Tuple
 from dataclasses import dataclass, field
 import numpy as np
@@ -867,24 +868,60 @@ class SemanticRepresentation:
             processing_logger.log_step("文本提取方式", f"use_caption={use_caption} (is_image_file={is_image_file}, method={image_extraction_method})")
 
             if use_caption:
-                # 使用Caption模式：调用ImageCaptionTagger获取描述和标签
-                processing_logger.log_step("文本提取", "使用ImageCaptionTagger生成图片描述和标签")
-                try:
-                    from semantic_representation.image_caption_tagger import ImageCaptionTagger
-                    caption_tagger = ImageCaptionTagger()
-                    caption_result = caption_tagger.generate_caption_and_tags(image_path)
+                # 使用Caption模式：先检查数据库是否已有caption和tags
+                existing_caption = None
+                existing_tags = None
 
-                    if caption_result:
-                        # 使用caption作为文本描述
-                        text_content = caption_result.get('caption', '')
-                        processing_logger.log_step("Caption生成完成", f"caption长度: {len(text_content)}")
-                    else:
-                        # caption失败，降级到OCR
-                        processing_logger.log_step("Caption失败", "降级使用OCR")
+                if db_manager and file_id:
+                    try:
+                        file_record = db_manager.get_file_by_id(file_id)
+                        if file_record:
+                            existing_caption = file_record.caption_text
+                            existing_tags = file_record.image_tags
+                            processing_logger.log_step("检查已有Caption", f"caption存在: {bool(existing_caption)}, tags存在: {bool(existing_tags)}")
+                    except Exception as e:
+                        processing_logger.log_step("检查已有Caption", f"查询失败: {e}")
+
+                if existing_caption or existing_tags:
+                    # 已有caption或tags，直接使用
+                    caption_result = {
+                        'caption': existing_caption or '',
+                        'tags': existing_tags or []
+                    }
+                    text_content = caption_result['caption']
+                    processing_logger.log_step("使用已有Caption", f"caption长度: {len(text_content)}, tags数量: {len(caption_result['tags'])}")
+                else:
+                    # 没有已有数据，调用模型生成
+                    processing_logger.log_step("文本提取", "使用ImageCaptionTagger生成图片描述和标签")
+                    try:
+                        from semantic_representation.image_caption_tagger import ImageCaptionTagger
+                        caption_tagger = ImageCaptionTagger()
+                        caption_result = caption_tagger.generate_caption_and_tags(image_path)
+
+                        if caption_result:
+                            text_content = caption_result.get('caption', '')
+                            processing_logger.log_step("Caption生成完成", f"caption长度: {len(text_content)}")
+
+                            # 保存到数据库
+                            if db_manager and file_id:
+                                from database import CaptionAnalysisStatus
+                                status = CaptionAnalysisStatus.ANALYZED_HAS_INFO if (text_content or caption_result.get('tags')) else CaptionAnalysisStatus.ANALYZED_FAILED
+                                db_manager.update_caption_and_tags(
+                                    file_id=file_id,
+                                    caption=text_content,
+                                    tags=caption_result.get('tags', []),
+                                    status=status
+                                )
+                                processing_logger.log_step("保存Caption", f"已保存到数据库，状态: {status}")
+                        else:
+                            # caption失败，降级到OCR
+                            processing_logger.log_step("Caption失败", "降级使用OCR")
+                            text_content = self.image_extractor.extract(image_path, source_file_path=block.file_path)
+                            caption_result = None
+                    except Exception as e:
+                        processing_logger.log_step("Caption异常", f"异常: {e}，降级使用OCR")
                         text_content = self.image_extractor.extract(image_path, source_file_path=block.file_path)
-                except Exception as e:
-                    processing_logger.log_step("Caption异常", f"异常: {e}，降级使用OCR")
-                    text_content = self.image_extractor.extract(image_path, source_file_path=block.file_path)
+                        caption_result = None
             else:
                 # 使用OCR模式（其他文件中的图片，或配置为OCR模式的图片文件）
                 processing_logger.log_step("文本提取", "使用ImageTextExtractor提取图片文本(OCR)")

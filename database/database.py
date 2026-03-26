@@ -53,6 +53,8 @@ class FileRecord:
     original_created_time: Optional[str] = None  # 原文件创建时间
     location: Optional[str] = None  # 地点
     caption_analysis_status: str = ""  # Caption打标状态
+    caption_text: Optional[str] = None  # 图片Caption描述
+    image_tags: Optional[List[str]] = None  # 图片标签列表
 
 
 @dataclass
@@ -164,7 +166,9 @@ class DatabaseManager:
                 spatiotemporal_analysis_status TEXT DEFAULT '',  -- 时空分析状态
                 original_created_time TEXT,  -- 原文件创建时间
                 location TEXT,  -- 地点
-                caption_analysis_status TEXT DEFAULT ''  -- Caption打标状态
+                caption_analysis_status TEXT DEFAULT '',  -- Caption打标状态
+                caption_text TEXT,  -- 图片Caption描述
+                image_tags TEXT  -- 图片标签列表（JSON格式）
             )
         ''')
         
@@ -598,6 +602,50 @@ class DatabaseManager:
             print(f"更新Caption分析状态失败: {e}")
             return False
 
+    def update_caption_and_tags(self, file_id: int, caption: str = None, tags: List[str] = None,
+                                 status: str = None) -> bool:
+        """更新图片Caption和标签
+
+        Args:
+            file_id: 文件ID
+            caption: Caption描述文本
+            tags: 标签列表
+            status: Caption分析状态（可选）
+
+        Returns:
+            是否更新成功
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            updates = []
+            params = []
+
+            if caption is not None:
+                updates.append("caption_text = ?")
+                params.append(caption)
+
+            if tags is not None:
+                updates.append("image_tags = ?")
+                params.append(json.dumps(tags, ensure_ascii=False))
+
+            if status is not None:
+                updates.append("caption_analysis_status = ?")
+                params.append(status)
+
+            if not updates:
+                return False
+
+            params.append(file_id)
+            sql = f"UPDATE files SET {', '.join(updates)} WHERE id = ?"
+            cursor.execute(sql, params)
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"更新Caption和标签失败: {e}")
+            return False
+
     def get_files_by_spatiotemporal_status(self, status: str) -> List[FileRecord]:
         """根据时空分析状态获取文件列表
 
@@ -676,6 +724,18 @@ class DatabaseManager:
         except (KeyError, IndexError):
             caption_analysis_status = ''
 
+        # 读取caption_text和image_tags
+        try:
+            caption_text = row['caption_text'] if 'caption_text' in row.keys() else None
+        except (KeyError, IndexError):
+            caption_text = None
+
+        try:
+            image_tags_str = row['image_tags'] if 'image_tags' in row.keys() else None
+            image_tags = json.loads(image_tags_str) if image_tags_str else None
+        except (KeyError, IndexError, json.JSONDecodeError):
+            image_tags = None
+
         return FileRecord(
             id=row['id'],
             file_path=row['file_path'],
@@ -693,7 +753,9 @@ class DatabaseManager:
             spatiotemporal_analysis_status=spatiotemporal_analysis_status,
             original_created_time=original_created_time,
             location=location,
-            caption_analysis_status=caption_analysis_status
+            caption_analysis_status=caption_analysis_status,
+            caption_text=caption_text,
+            image_tags=image_tags
         )
     
     # ==================== 数据块表操作 ====================
