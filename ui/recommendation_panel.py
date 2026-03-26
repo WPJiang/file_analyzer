@@ -9,53 +9,64 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal, QSize
 from PyQt5.QtGui import QIcon, QFont, QColor
 
+from .utils import get_font_sizes, get_window_sizes, get_icon_sizes
+
 
 class RecommendationItem(QFrame):
     """推荐项组件"""
-    
+
     clicked = pyqtSignal(str)
-    
+
     def __init__(self, file_path: str, parent=None):
         super().__init__(parent)
         self.file_path = file_path
         self.file_name = os.path.basename(file_path)
         self.file_ext = os.path.splitext(file_path)[1].lower()
-        
+        self.font_sizes = get_font_sizes()
+        self.icon_sizes = get_icon_sizes()
+        self.window_sizes = get_window_sizes()
+
         self.init_ui()
-    
+
     def init_ui(self):
         """初始化UI"""
         self.setFrameStyle(QFrame.StyledPanel)
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        
+        self.setMinimumHeight(int(self.window_sizes['button_height'] * 1.5))
+
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(10)
-        
+        layout.setContentsMargins(
+            self.window_sizes['margin_normal'],
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_normal'],
+            self.window_sizes['margin_small']
+        )
+        layout.setSpacing(self.window_sizes['spacing_normal'])
+
         # 文件图标
         icon_label = QLabel(self.get_file_icon())
-        icon_label.setStyleSheet(f"font-size: 24px; color: {self.get_icon_color()};")
+        icon_label.setStyleSheet(f"font-size: {self.font_sizes['icon_medium']}px; color: {self.get_icon_color()};")
         layout.addWidget(icon_label)
-        
+
         # 文件信息
         info_layout = QVBoxLayout()
         info_layout.setSpacing(2)
-        
+
         # 文件名
         name_label = QLabel(self.file_name)
-        name_label.setStyleSheet("""
+        name_label.setStyleSheet(f"""
             font-weight: bold;
             color: #333;
-            font-size: 12px;
+            font-size: {self.font_sizes['normal']}px;
         """)
         name_label.setWordWrap(True)
-        name_label.setMaximumWidth(200)
+        name_label.setMaximumWidth(self.window_sizes['input_max_width'])
         info_layout.addWidget(name_label)
-        
+
         # 文件类型
         type_label = QLabel(self.get_file_type())
-        type_label.setStyleSheet("color: #666; font-size: 10px;")
+        type_label.setStyleSheet(f"color: #666; font-size: {self.font_sizes['small']}px;")
         info_layout.addWidget(type_label)
         
         layout.addLayout(info_layout, 1)
@@ -146,51 +157,54 @@ class RecommendationItem(QFrame):
 
 class RecommendationGroup(QFrame):
     """推荐组组件"""
-    
+
     item_selected = pyqtSignal(str)
-    
+
     def __init__(self, title: str, files: List[str], parent=None):
         super().__init__(parent)
         self.title = title
         self.files = files
-        
+        self.font_sizes = get_font_sizes()
+        self.icon_sizes = get_icon_sizes()
+        self.window_sizes = get_window_sizes()
+
         self.init_ui()
-    
+
     def init_ui(self):
         """初始化UI"""
         self.setFrameStyle(QFrame.NoFrame)
-        
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 10, 0, 10)
-        layout.setSpacing(10)
-        
+        layout.setContentsMargins(0, self.window_sizes['margin_normal'], 0, self.window_sizes['margin_normal'])
+        layout.setSpacing(self.window_sizes['spacing_normal'])
+
         # 标题栏
         header = QWidget()
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(5, 0, 5, 0)
-        
+        header_layout.setContentsMargins(self.window_sizes['margin_small'], 0, self.window_sizes['margin_small'], 0)
+
         title_label = QLabel(self.title)
-        title_label.setStyleSheet("""
-            font-size: 14px;
+        title_label.setStyleSheet(f"""
+            font-size: {self.font_sizes['title']}px;
             font-weight: bold;
             color: #333;
         """)
         header_layout.addWidget(title_label)
-        
+
         header_layout.addStretch()
-        
+
         # 更多按钮
         more_btn = QToolButton()
         more_btn.setText("更多")
-        more_btn.setStyleSheet("""
-            QToolButton {
+        more_btn.setStyleSheet(f"""
+            QToolButton {{
                 color: #2196F3;
                 border: none;
-                font-size: 11px;
-            }
-            QToolButton:hover {
+                font-size: {self.font_sizes['small']}px;
+            }}
+            QToolButton:hover {{
                 color: #1976D2;
-            }
+            }}
         """)
         more_btn.clicked.connect(self.show_more)
         header_layout.addWidget(more_btn)
@@ -265,105 +279,116 @@ class DirectoryTreeItem(QTreeWidgetItem):
 
 class RecommendationPanel(QWidget):
     """推荐窗口组件 - 包含目录树"""
-    
+
     recommendation_selected = pyqtSignal(str)
     directory_selected = pyqtSignal(str)
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.recommendations = []
         self.directory_structure = {}
         self.show_files = False  # 默认不显示文件
         self.all_items = []  # 存储所有项目数据
-        
+        self.font_sizes = get_font_sizes()
+        self.icon_sizes = get_icon_sizes()
+        self.window_sizes = get_window_sizes()
+
         self.init_ui()
-    
+
     def init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
-        
+        layout.setContentsMargins(
+            self.window_sizes['margin_normal'],
+            self.window_sizes['margin_normal'],
+            self.window_sizes['margin_normal'],
+            self.window_sizes['margin_normal']
+        )
+        layout.setSpacing(self.window_sizes['spacing_normal'])
+
         # 标题
         title_layout = QHBoxLayout()
-        
+
         title_label = QLabel("📂 目录结构")
-        title_label.setStyleSheet("""
-            font-size: 16px;
+        title_label.setStyleSheet(f"""
+            font-size: {self.font_sizes['title']}px;
             font-weight: bold;
             color: #333;
             padding: 5px;
         """)
         title_layout.addWidget(title_label)
-        
+
         title_layout.addStretch()
-        
+
         # 展开/折叠按钮（可切换状态，默认展开）
         self.expand_collapse_btn = QPushButton("折叠全部")
         self.expand_collapse_btn.setCheckable(True)
         self.expand_collapse_btn.setChecked(False)  # 默认未选中，表示当前是展开状态
-        self.expand_collapse_btn.setStyleSheet("""
-            QPushButton {
+        self.expand_collapse_btn.setMinimumHeight(self.window_sizes['button_height'])
+        self.expand_collapse_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #2196F3;
                 color: white;
                 border: none;
                 padding: 4px 12px;
                 border-radius: 4px;
-                font-size: 11px;
-            }
-            QPushButton:hover {
+                font-size: {self.font_sizes['small']}px;
+            }}
+            QPushButton:hover {{
                 background-color: #1976D2;
-            }
-            QPushButton:checked {
+            }}
+            QPushButton:checked {{
                 background-color: #607D8B;
-            }
-            QPushButton:checked:hover {
+            }}
+            QPushButton:checked:hover {{
                 background-color: #455A64;
-            }
+            }}
         """)
         self.expand_collapse_btn.clicked.connect(self.toggle_expand_collapse)
         title_layout.addWidget(self.expand_collapse_btn)
-        
+
         # 显示文件按钮
         self.show_files_btn = QPushButton("显示文件")
         self.show_files_btn.setCheckable(True)
         self.show_files_btn.setChecked(False)
-        self.show_files_btn.setStyleSheet("""
-            QPushButton {
+        self.show_files_btn.setMinimumHeight(self.window_sizes['button_height'])
+        self.show_files_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #FF9800;
                 color: white;
                 border: none;
                 padding: 4px 12px;
                 border-radius: 4px;
-                font-size: 11px;
-            }
-            QPushButton:hover {
+                font-size: {self.font_sizes['small']}px;
+            }}
+            QPushButton:hover {{
                 background-color: #F57C00;
-            }
-            QPushButton:checked {
+            }}
+            QPushButton:checked {{
                 background-color: #4CAF50;
-            }
-            QPushButton:checked:hover {
+            }}
+            QPushButton:checked:hover {{
                 background-color: #388E3C;
-            }
+            }}
         """)
         self.show_files_btn.clicked.connect(self.toggle_show_files)
         title_layout.addWidget(self.show_files_btn)
-        
+
         # 刷新按钮
         refresh_btn = QPushButton("🔄")
         refresh_btn.setToolTip("刷新")
-        refresh_btn.setStyleSheet("""
-            QPushButton {
+        refresh_btn.setMinimumSize(self.icon_sizes['medium'], self.icon_sizes['medium'])
+        refresh_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: transparent;
                 border: none;
-                font-size: 16px;
+                font-size: {self.font_sizes['icon_medium']}px;
                 padding: 5px;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 background-color: #f0f0f0;
                 border-radius: 4px;
-            }
+            }}
         """)
         refresh_btn.clicked.connect(self.refresh_recommendations)
         title_layout.addWidget(refresh_btn)
@@ -380,34 +405,35 @@ class RecommendationPanel(QWidget):
         self.tree.itemDoubleClicked.connect(self.on_tree_item_double_clicked)
         
         # 设置树样式
-        self.tree.setStyleSheet("""
-            QTreeWidget {
+        self.tree.setStyleSheet(f"""
+            QTreeWidget {{
                 border: 1px solid #ddd;
                 border-radius: 6px;
                 background-color: white;
                 alternate-background-color: #f9f9f9;
-            }
-            QTreeWidget::item {
+                font-size: {self.font_sizes['tree']}px;
+            }}
+            QTreeWidget::item {{
                 padding: 5px;
                 border-bottom: 1px solid #eee;
-            }
-            QTreeWidget::item:selected {
+            }}
+            QTreeWidget::item:selected {{
                 background-color: #e3f2fd;
                 color: #1976D2;
-            }
-            QTreeWidget::item:hover {
+            }}
+            QTreeWidget::item:hover {{
                 background-color: #f5f5f5;
-            }
+            }}
             QTreeWidget::branch:has-children:!has-siblings:closed,
-            QTreeWidget::branch:closed:has-children:has-siblings {
+            QTreeWidget::branch:closed:has-children:has-siblings {{
                 image: none;
                 border-image: none;
-            }
+            }}
             QTreeWidget::branch:open:has-children:!has-siblings,
-            QTreeWidget::branch:open:has-children:has-siblings {
+            QTreeWidget::branch:open:has-children:has-siblings {{
                 image: none;
                 border-image: none;
-            }
+            }}
         """)
         
         layout.addWidget(self.tree)

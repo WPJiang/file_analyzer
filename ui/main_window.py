@@ -38,6 +38,7 @@ try:
     from .recommendation_panel import RecommendationPanel
     from .search_panel import SearchPanel
     from .classification_panel import ClassificationPanel
+    from .utils import get_font_sizes, get_window_sizes, get_icon_sizes
     from ..directory_scanner import DirectoryScanner
 except ImportError:
     try:
@@ -45,6 +46,7 @@ except ImportError:
         from recommendation_panel import RecommendationPanel
         from search_panel import SearchPanel
         from classification_panel import ClassificationPanel
+        from utils import get_font_sizes, get_window_sizes, get_icon_sizes
         from directory_scanner import DirectoryScanner
     except ImportError:
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -52,6 +54,7 @@ except ImportError:
         from ui.recommendation_panel import RecommendationPanel
         from ui.search_panel import SearchPanel
         from ui.classification_panel import ClassificationPanel
+        from ui.utils import get_font_sizes, get_window_sizes, get_icon_sizes
         from directory_scanner.directory_scanner import DirectoryScanner
 
 # 导入模型管理器（用于内存优化）
@@ -1494,42 +1497,55 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         """初始化UI界面"""
         self.setWindowTitle("文件分析管理器")
-        self.setGeometry(100, 100, 1400, 900)
-        
+
+        # 获取自适应尺寸
+        window_sizes = get_window_sizes()
+
+        # 使用自适应窗口大小
+        self.setGeometry(100, 100, window_sizes['main_width'], window_sizes['main_height'])
+
         # 创建中央部件
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
+
         # 主布局
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
-        
+        main_layout.setContentsMargins(
+            window_sizes['margin_normal'],
+            window_sizes['margin_normal'],
+            window_sizes['margin_normal'],
+            window_sizes['margin_normal']
+        )
+        main_layout.setSpacing(window_sizes['spacing_normal'])
+
         # 主内容区域（使用分割器）- 设置拉伸因子，确保占用至少80%高度
         content_splitter = QSplitter(Qt.Horizontal)
         content_splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        
+
         # 左侧：推荐窗口
         self.recommendation_panel = RecommendationPanel()
         self.recommendation_panel.recommendation_selected.connect(self.on_recommendation_selected)
-        self.recommendation_panel.setMinimumHeight(400)
+        self.recommendation_panel.setMinimumHeight(window_sizes['main_height'] // 2)
         content_splitter.addWidget(self.recommendation_panel)
-        
+
         # 中间：预览窗口 - 设置最小高度
         self.preview_panel = PreviewPanel()
-        self.preview_panel.setMinimumHeight(400)
+        self.preview_panel.setMinimumHeight(window_sizes['main_height'] // 2)
         content_splitter.addWidget(self.preview_panel)
-        
+
         # 右侧：分类结果窗口（包含类别体系、分类结果、搜索三种模式）
         self.classification_panel = ClassificationPanel()
         self.classification_panel.file_selected.connect(self.on_file_selected)
         self.classification_panel.category_system_changed.connect(self.on_category_system_changed)
         self.classification_panel.set_db_manager(self.db_manager)  # 设置数据库管理器
-        self.classification_panel.setMinimumHeight(400)
+        self.classification_panel.setMinimumHeight(window_sizes['main_height'] // 2)
         content_splitter.addWidget(self.classification_panel)
 
-        # 设置分割器比例（三列布局）
-        content_splitter.setSizes([300, 500, 400])
+        # 设置分割器比例（三列布局）- 使用自适应宽度
+        left_width = int(window_sizes['main_width'] * 0.2)
+        middle_width = int(window_sizes['main_width'] * 0.4)
+        right_width = int(window_sizes['main_width'] * 0.3)
+        content_splitter.setSizes([left_width, middle_width, right_width])
         
         # 将分割器添加到主布局，设置拉伸因子为1，确保占用主要空间
         main_layout.addWidget(content_splitter, 1)

@@ -12,6 +12,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QPixmap, QImage, QFont, QTextCursor
 
+from .utils import get_font_sizes, get_window_sizes, get_icon_sizes
+
 # 导入 PIL 用于更多图片格式支持
 try:
     from PIL import Image
@@ -56,7 +58,7 @@ except ImportError:
 
 class PDFPreviewWidget(QWidget):
     """PDF预览组件 - 支持翻页和缩放"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.doc = None
@@ -64,75 +66,88 @@ class PDFPreviewWidget(QWidget):
         self.total_pages = 0
         self.zoom_level = 1.0
         self.scale_factor = 1.5  # 基础缩放比例
-        
+        self.font_sizes = get_font_sizes()
+        self.icon_sizes = get_icon_sizes()
+        self.window_sizes = get_window_sizes()
+
         self.init_ui()
-    
+
     def init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(5)
-        
+        layout.setSpacing(self.window_sizes['spacing_small'])
+
         # 工具栏
         toolbar = QWidget()
         toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(5, 5, 5, 5)
-        toolbar_layout.setSpacing(10)
-        
+        toolbar_layout.setContentsMargins(
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small']
+        )
+        toolbar_layout.setSpacing(self.window_sizes['spacing_normal'])
+
         # 上一页按钮
         self.prev_btn = QPushButton("◀ 上一页")
+        self.prev_btn.setMinimumHeight(self.window_sizes['button_height'])
         self.prev_btn.setStyleSheet(self.get_button_style("#2196F3"))
         self.prev_btn.clicked.connect(self.prev_page)
         toolbar_layout.addWidget(self.prev_btn)
-        
+
         # 页码显示
         self.page_label = QLabel("第 0 / 0 页")
-        self.page_label.setStyleSheet("font-size: 13px; color: #333;")
+        self.page_label.setStyleSheet(f"font-size: {self.font_sizes['normal']}px; color: #333;")
         toolbar_layout.addWidget(self.page_label)
-        
+
         # 下一页按钮
         self.next_btn = QPushButton("下一页 ▶")
+        self.next_btn.setMinimumHeight(self.window_sizes['button_height'])
         self.next_btn.setStyleSheet(self.get_button_style("#2196F3"))
         self.next_btn.clicked.connect(self.next_page)
         toolbar_layout.addWidget(self.next_btn)
-        
+
         toolbar_layout.addStretch()
-        
+
         # 缩放控制
         zoom_label = QLabel("缩放:")
         zoom_label.setStyleSheet("color: #666;")
         toolbar_layout.addWidget(zoom_label)
-        
+
         self.zoom_combo = QComboBox()
         self.zoom_combo.addItems(["50%", "75%", "100%", "125%", "150%", "200%", "300%"])
         self.zoom_combo.setCurrentText("100%")
         self.zoom_combo.currentTextChanged.connect(self.on_zoom_changed)
-        self.zoom_combo.setStyleSheet("""
-            QComboBox {
+        self.zoom_combo.setMinimumHeight(self.window_sizes['input_height'])
+        self.zoom_combo.setStyleSheet(f"""
+            QComboBox {{
                 padding: 4px 8px;
                 border: 1px solid #ddd;
                 border-radius: 4px;
                 min-width: 80px;
-            }
+                font-size: {self.font_sizes['small']}px;
+            }}
         """)
         toolbar_layout.addWidget(self.zoom_combo)
-        
+
         # 缩小按钮
         zoom_out_btn = QPushButton("-")
-        zoom_out_btn.setFixedSize(30, 30)
+        btn_size = self.icon_sizes['small']
+        zoom_out_btn.setFixedSize(btn_size, btn_size)
         zoom_out_btn.setStyleSheet(self.get_button_style("#607D8B"))
         zoom_out_btn.clicked.connect(self.zoom_out)
         toolbar_layout.addWidget(zoom_out_btn)
-        
+
         # 放大按钮
         zoom_in_btn = QPushButton("+")
-        zoom_in_btn.setFixedSize(30, 30)
+        zoom_in_btn.setFixedSize(btn_size, btn_size)
         zoom_in_btn.setStyleSheet(self.get_button_style("#607D8B"))
         zoom_in_btn.clicked.connect(self.zoom_in)
         toolbar_layout.addWidget(zoom_in_btn)
-        
+
         layout.addWidget(toolbar)
-        
+
         # 预览区域
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -143,20 +158,20 @@ class PDFPreviewWidget(QWidget):
                 background-color: #f5f5f5;
             }
         """)
-        
+
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setStyleSheet("background-color: white;")
-        
+
         scroll.setWidget(self.image_label)
         layout.addWidget(scroll)
-        
+
         # 页面信息
         self.info_label = QLabel("")
         self.info_label.setStyleSheet("color: #666; padding: 5px;")
         self.info_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.info_label)
-    
+
     def get_button_style(self, color: str) -> str:
         """获取按钮样式"""
         return f"""
@@ -166,7 +181,7 @@ class PDFPreviewWidget(QWidget):
                 border: none;
                 padding: 6px 12px;
                 border-radius: 4px;
-                font-size: 12px;
+                font-size: {self.font_sizes['button']}px;
             }}
             QPushButton:hover {{
                 background-color: {color}dd;
@@ -281,29 +296,37 @@ class PDFPreviewWidget(QWidget):
 
 class WordPreviewWidget(QWidget):
     """Word文档预览组件"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.font_sizes = get_font_sizes()
+        self.icon_sizes = get_icon_sizes()
+        self.window_sizes = get_window_sizes()
         self.init_ui()
-    
+
     def init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(5)
-        
+        layout.setSpacing(self.window_sizes['spacing_small'])
+
         # 工具栏
         toolbar = QWidget()
         toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(5, 5, 5, 5)
-        
+        toolbar_layout.setContentsMargins(
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small']
+        )
+
         info_label = QLabel("Word 文档预览")
         info_label.setStyleSheet("font-weight: bold; color: #333;")
         toolbar_layout.addWidget(info_label)
         toolbar_layout.addStretch()
-        
+
         layout.addWidget(toolbar)
-        
+
         # 文本显示区域
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -313,18 +336,18 @@ class WordPreviewWidget(QWidget):
                 background-color: white;
             }
         """)
-        
+
         self.text_browser = QTextBrowser()
         self.text_browser.setOpenExternalLinks(True)
-        self.text_browser.setStyleSheet("""
-            QTextBrowser {
+        self.text_browser.setStyleSheet(f"""
+            QTextBrowser {{
                 border: none;
                 padding: 20px;
                 background-color: white;
                 font-family: 'Microsoft YaHei', 'SimSun', serif;
-                font-size: 12pt;
+                font-size: {self.font_sizes['normal']}pt;
                 line-height: 1.6;
-            }
+            }}
         """)
         
         scroll.setWidget(self.text_browser)
@@ -413,48 +436,58 @@ class WordPreviewWidget(QWidget):
 
 class ExcelPreviewWidget(QWidget):
     """Excel预览组件"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.workbook = None
         self.current_sheet = 0
+        self.font_sizes = get_font_sizes()
+        self.icon_sizes = get_icon_sizes()
+        self.window_sizes = get_window_sizes()
         self.init_ui()
-    
+
     def init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(5)
-        
+        layout.setSpacing(self.window_sizes['spacing_small'])
+
         # 工具栏
         toolbar = QWidget()
         toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(5, 5, 5, 5)
-        
+        toolbar_layout.setContentsMargins(
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small']
+        )
+
         sheet_label = QLabel("工作表:")
         sheet_label.setStyleSheet("color: #666;")
         toolbar_layout.addWidget(sheet_label)
-        
+
         self.sheet_combo = QComboBox()
         self.sheet_combo.currentIndexChanged.connect(self.on_sheet_changed)
-        self.sheet_combo.setStyleSheet("""
-            QComboBox {
+        self.sheet_combo.setMinimumHeight(self.window_sizes['input_height'])
+        self.sheet_combo.setStyleSheet(f"""
+            QComboBox {{
                 padding: 4px 8px;
                 border: 1px solid #ddd;
                 border-radius: 4px;
                 min-width: 150px;
-            }
+                font-size: {self.font_sizes['small']}px;
+            }}
         """)
         toolbar_layout.addWidget(self.sheet_combo)
-        
+
         toolbar_layout.addStretch()
-        
+
         self.info_label = QLabel("")
         self.info_label.setStyleSheet("color: #666;")
         toolbar_layout.addWidget(self.info_label)
-        
+
         layout.addWidget(toolbar)
-        
+
         # 表格显示区域
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -464,19 +497,20 @@ class ExcelPreviewWidget(QWidget):
                 background-color: white;
             }
         """)
-        
+
         self.table = QTableWidget()
-        self.table.setStyleSheet("""
-            QTableWidget {
+        self.table.setStyleSheet(f"""
+            QTableWidget {{
                 border: none;
                 gridline-color: #ddd;
-            }
-            QHeaderView::section {
+                font-size: {self.font_sizes['small']}px;
+            }}
+            QHeaderView::section {{
                 background-color: #f5f5f5;
                 padding: 5px;
                 border: 1px solid #ddd;
                 font-weight: bold;
-            }
+            }}
         """)
         
         scroll.setWidget(self.table)
@@ -551,44 +585,54 @@ class ExcelPreviewWidget(QWidget):
 
 class PowerPointPreviewWidget(QWidget):
     """PowerPoint预览组件"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.prs = None
         self.current_slide = 0
         self.total_slides = 0
+        self.font_sizes = get_font_sizes()
+        self.icon_sizes = get_icon_sizes()
+        self.window_sizes = get_window_sizes()
         self.init_ui()
-    
+
     def init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(5)
-        
+        layout.setSpacing(self.window_sizes['spacing_small'])
+
         # 工具栏
         toolbar = QWidget()
         toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(5, 5, 5, 5)
-        toolbar_layout.setSpacing(10)
-        
+        toolbar_layout.setContentsMargins(
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small']
+        )
+        toolbar_layout.setSpacing(self.window_sizes['spacing_normal'])
+
         self.prev_btn = QPushButton("◀ 上一页")
+        self.prev_btn.setMinimumHeight(self.window_sizes['button_height'])
         self.prev_btn.setStyleSheet(self.get_button_style("#2196F3"))
         self.prev_btn.clicked.connect(self.prev_slide)
         toolbar_layout.addWidget(self.prev_btn)
-        
+
         self.slide_label = QLabel("第 0 / 0 页")
-        self.slide_label.setStyleSheet("font-size: 13px; color: #333;")
+        self.slide_label.setStyleSheet(f"font-size: {self.font_sizes['normal']}px; color: #333;")
         toolbar_layout.addWidget(self.slide_label)
-        
+
         self.next_btn = QPushButton("下一页 ▶")
+        self.next_btn.setMinimumHeight(self.window_sizes['button_height'])
         self.next_btn.setStyleSheet(self.get_button_style("#2196F3"))
         self.next_btn.clicked.connect(self.next_slide)
         toolbar_layout.addWidget(self.next_btn)
-        
+
         toolbar_layout.addStretch()
-        
+
         layout.addWidget(toolbar)
-        
+
         # 幻灯片显示区域
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -599,21 +643,22 @@ class PowerPointPreviewWidget(QWidget):
                 background-color: #f5f5f5;
             }
         """)
-        
+
         self.slide_widget = QTextBrowser()
         self.slide_widget.setOpenExternalLinks(True)
-        self.slide_widget.setStyleSheet("""
-            QTextBrowser {
+        self.slide_widget.setStyleSheet(f"""
+            QTextBrowser {{
                 border: none;
                 padding: 20px;
                 background-color: white;
                 font-family: 'Microsoft YaHei', sans-serif;
-            }
+                font-size: {self.font_sizes['normal']}px;
+            }}
         """)
-        
+
         scroll.setWidget(self.slide_widget)
         layout.addWidget(scroll)
-    
+
     def get_button_style(self, color: str) -> str:
         """获取按钮样式"""
         return f"""
@@ -623,7 +668,7 @@ class PowerPointPreviewWidget(QWidget):
                 border: none;
                 padding: 6px 12px;
                 border-radius: 4px;
-                font-size: 12px;
+                font-size: {self.font_sizes['button']}px;
             }}
             QPushButton:hover {{
                 background-color: {color}dd;
@@ -942,29 +987,37 @@ class PreviewPanel(QWidget):
         self.current_file = None
         self.current_metadata = None
         self.preview_worker = None
+        self.font_sizes = get_font_sizes()
+        self.icon_sizes = get_icon_sizes()
+        self.window_sizes = get_window_sizes()
 
         self.init_ui()
-    
+
     def init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
-        
+        layout.setContentsMargins(
+            self.window_sizes['margin_normal'],
+            self.window_sizes['margin_normal'],
+            self.window_sizes['margin_normal'],
+            self.window_sizes['margin_normal']
+        )
+        layout.setSpacing(self.window_sizes['spacing_normal'])
+
         # 标题
         title_layout = QHBoxLayout()
-        
+
         self.title_label = QLabel("文件预览")
-        self.title_label.setStyleSheet("""
-            font-size: 16px;
+        self.title_label.setStyleSheet(f"""
+            font-size: {self.font_sizes['title']}px;
             font-weight: bold;
             color: #333;
             padding: 5px;
         """)
         title_layout.addWidget(self.title_label)
-        
+
         title_layout.addStretch()
-        
+
         # 文件信息
         self.file_info_label = QLabel("")
         self.file_info_label.setStyleSheet("color: #666;")
@@ -1031,18 +1084,18 @@ class PreviewPanel(QWidget):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setAlignment(Qt.AlignCenter)
-        
+
         label = QLabel("请选择文件以预览")
-        label.setStyleSheet("""
+        label.setStyleSheet(f"""
             color: #999;
-            font-size: 18px;
+            font-size: {self.font_sizes['icon_medium']}px;
             padding: 20px;
         """)
         label.setAlignment(Qt.AlignCenter)
         layout.addWidget(label)
-        
+
         return page
-    
+
     def create_image_page(self) -> QWidget:
         """创建图片预览页面"""
         page = QWidget()
@@ -1070,10 +1123,10 @@ class PreviewPanel(QWidget):
         # Caption标签
         self.image_caption_label = QLabel("")
         self.image_caption_label.setAlignment(Qt.AlignCenter)
-        self.image_caption_label.setStyleSheet("""
+        self.image_caption_label.setStyleSheet(f"""
             color: #333;
             padding: 5px;
-            font-size: 13px;
+            font-size: {self.font_sizes['normal']}px;
             background-color: #f0f8ff;
             border-radius: 4px;
             margin: 2px;
@@ -1085,10 +1138,10 @@ class PreviewPanel(QWidget):
         # Tags标签
         self.image_tags_label = QLabel("")
         self.image_tags_label.setAlignment(Qt.AlignCenter)
-        self.image_tags_label.setStyleSheet("""
+        self.image_tags_label.setStyleSheet(f"""
             color: #2196F3;
             padding: 5px;
-            font-size: 12px;
+            font-size: {self.font_sizes['small']}px;
         """)
         self.image_tags_label.setWordWrap(True)
         self.image_tags_label.hide()
@@ -1101,10 +1154,10 @@ class PreviewPanel(QWidget):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        
+
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
-        self.text_edit.setFont(QFont("Consolas", 10))
+        self.text_edit.setFont(QFont("Consolas", self.font_sizes['normal']))
         self.text_edit.setStyleSheet("""
             QTextEdit {
                 border: none;
@@ -1112,108 +1165,110 @@ class PreviewPanel(QWidget):
                 padding: 10px;
             }
         """)
-        
+
         layout.addWidget(self.text_edit)
-        
+
         return page
-    
+
     def create_audio_page(self) -> QWidget:
         """创建音频预览页面"""
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setAlignment(Qt.AlignCenter)
-        
+
         icon_label = QLabel("🎵")
-        icon_label.setStyleSheet("font-size: 64px;")
+        icon_label.setStyleSheet(f"font-size: {self.font_sizes['icon_large']}px;")
         icon_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(icon_label)
-        
+
         label = QLabel("音频文件")
-        label.setStyleSheet("font-size: 18px; color: #333;")
+        label.setStyleSheet(f"font-size: {self.font_sizes['icon_medium']}px; color: #333;")
         label.setAlignment(Qt.AlignCenter)
         layout.addWidget(label)
-        
+
         desc_label = QLabel("音频预览需要额外的播放器\n请使用外部程序播放")
         desc_label.setStyleSheet("color: #666;")
         desc_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(desc_label)
-        
+
         open_btn = QPushButton("使用默认程序播放")
-        open_btn.setStyleSheet("""
-            QPushButton {
+        open_btn.setMinimumHeight(self.window_sizes['button_height'])
+        open_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #3498db;
                 color: white;
                 padding: 10px 20px;
                 border-radius: 4px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
+                font-size: {self.font_sizes['button']}px;
+            }}
+            QPushButton:hover {{
                 background-color: #2980b9;
-            }
+            }}
         """)
         open_btn.clicked.connect(self.open_current_file)
         layout.addWidget(open_btn, alignment=Qt.AlignCenter)
-        
+
         return page
-    
+
     def create_unsupported_page(self) -> QWidget:
         """创建不支持页面"""
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setAlignment(Qt.AlignCenter)
-        
+
         icon_label = QLabel("📎")
-        icon_label.setStyleSheet("font-size: 64px;")
+        icon_label.setStyleSheet(f"font-size: {self.font_sizes['icon_large']}px;")
         icon_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(icon_label)
-        
+
         label = QLabel("不支持的文件格式")
-        label.setStyleSheet("font-size: 18px; color: #333;")
+        label.setStyleSheet(f"font-size: {self.font_sizes['icon_medium']}px; color: #333;")
         label.setAlignment(Qt.AlignCenter)
         layout.addWidget(label)
-        
+
         self.unsupported_desc_label = QLabel("该文件类型暂不支持预览\n请使用外部程序打开")
         self.unsupported_desc_label.setStyleSheet("color: #666;")
         self.unsupported_desc_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.unsupported_desc_label)
-        
+
         open_btn = QPushButton("使用默认程序打开")
-        open_btn.setStyleSheet("""
-            QPushButton {
+        open_btn.setMinimumHeight(self.window_sizes['button_height'])
+        open_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #95a5a6;
                 color: white;
                 padding: 10px 20px;
                 border-radius: 4px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
+                font-size: {self.font_sizes['button']}px;
+            }}
+            QPushButton:hover {{
                 background-color: #7f8c8d;
-            }
+            }}
         """)
         open_btn.clicked.connect(self.open_current_file)
         layout.addWidget(open_btn, alignment=Qt.AlignCenter)
-        
+
         return page
-    
+
     def create_loading_page(self) -> QWidget:
         """创建加载中页面"""
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setAlignment(Qt.AlignCenter)
-        
+
         self.loading_label = QLabel("正在加载预览...")
-        self.loading_label.setStyleSheet("""
+        self.loading_label.setStyleSheet(f"""
             color: #666;
-            font-size: 16px;
+            font-size: {self.font_sizes['title']}px;
         """)
         self.loading_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.loading_label)
-        
+
         self.loading_bar = QProgressBar()
         self.loading_bar.setRange(0, 0)  # 无限进度
         self.loading_bar.setMaximumWidth(200)
         layout.addWidget(self.loading_bar, alignment=Qt.AlignCenter)
-        
+
         return page
     
     def preview_file(self, file_path: str, metadata: dict = None):

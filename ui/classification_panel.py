@@ -8,6 +8,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QFont, QScreen
 
+from .utils import get_font_sizes, get_window_sizes, get_icon_sizes
+
 
 class CategorySystem:
     """类别体系数据结构"""
@@ -76,47 +78,11 @@ class ClassificationPanel(QWidget):
         self.db_manager = None  # 数据库管理器，用于保存类别体系
 
         # 计算自适应字体大小
-        self._calculate_font_sizes()
+        self.font_sizes = get_font_sizes()
+        self.icon_sizes = get_icon_sizes()
+        self.window_sizes = get_window_sizes()
 
         self.init_ui()
-
-    def _calculate_font_sizes(self):
-        """根据屏幕分辨率计算字体大小"""
-        screen = QApplication.primaryScreen()
-        if screen:
-            # 获取屏幕物理尺寸（英寸）
-            physical_size = screen.physicalSize()
-            # 获取屏幕逻辑DPI
-            logical_dpi = screen.logicalDotsPerInch()
-            # 获取屏幕几何尺寸
-            geometry = screen.geometry()
-            screen_width = geometry.width()
-            screen_height = geometry.height()
-
-            # 计算缩放因子（以1920x1080为基准）
-            base_width = 1920
-            scale_factor = screen_width / base_width
-
-            # 限制缩放范围
-            scale_factor = max(0.8, min(1.5, scale_factor))
-
-            # 计算各层级字体大小
-            self.font_sizes = {
-                'title': max(12, int(14 * scale_factor)),      # 标题字体
-                'normal': max(10, int(12 * scale_factor)),      # 正常字体
-                'small': max(9, int(10 * scale_factor)),        # 小字体
-                'tree': max(10, int(11 * scale_factor)),        # 树形控件字体
-                'button': max(10, int(11 * scale_factor)),      # 按钮字体
-            }
-        else:
-            # 默认字体大小
-            self.font_sizes = {
-                'title': 14,
-                'normal': 12,
-                'small': 10,
-                'tree': 11,
-                'button': 11,
-            }
 
     def set_db_manager(self, db_manager):
         """设置数据库管理器"""
@@ -126,12 +92,17 @@ class ClassificationPanel(QWidget):
         """初始化UI"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(5)
+        layout.setSpacing(self.window_sizes['spacing_small'])
 
         # 头部区域
         header = QWidget()
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(5, 5, 5, 5)
+        header_layout.setContentsMargins(
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small']
+        )
 
         self.title_label = QLabel("📁 类别体系")
         self.title_label.setStyleSheet(f"font-weight: bold; font-size: {self.font_sizes['title']}px;")
@@ -140,26 +111,28 @@ class ClassificationPanel(QWidget):
         header_layout.addStretch()
 
         # 保存类别体系按钮（替换原来的加号按钮）
+        btn_size = self.icon_sizes['small']
         self.save_system_btn = QPushButton("💾")
         self.save_system_btn.setToolTip("保存所有类别体系到数据库")
-        self.save_system_btn.setFixedSize(28, 28)
-        self.save_system_btn.setStyleSheet("""
-            QPushButton {
+        self.save_system_btn.setFixedSize(btn_size, btn_size)
+        self.save_system_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #FF9800;
                 color: white;
                 border: none;
-                border-radius: 14px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
+                border-radius: {btn_size // 2}px;
+                font-size: {self.font_sizes['title']}px;
+            }}
+            QPushButton:hover {{
                 background-color: #F57C00;
-            }
+            }}
         """)
         self.save_system_btn.clicked.connect(self.on_save_systems)
         header_layout.addWidget(self.save_system_btn)
 
         # 功能切换按钮（替换原来的搜索按钮）
         self.mode_btn = QPushButton("功能切换")
+        self.mode_btn.setMinimumHeight(self.window_sizes['button_height'])
         self.mode_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: #2196F3;
@@ -176,7 +149,7 @@ class ClassificationPanel(QWidget):
         self.mode_btn.clicked.connect(self.toggle_mode)
         header_layout.addWidget(self.mode_btn)
 
-        header_layout.addSpacing(10)
+        header_layout.addSpacing(self.window_sizes['spacing_normal'])
 
         self.count_label = QLabel("")
         self.count_label.setStyleSheet(f"color: #666; font-size: {self.font_sizes['small']}px;")

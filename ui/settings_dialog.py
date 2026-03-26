@@ -11,6 +11,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 
+from .utils import get_font_sizes, get_window_sizes, get_icon_sizes
+
 
 class SettingsDialog(QDialog):
     """设置对话框"""
@@ -20,11 +22,21 @@ class SettingsDialog(QDialog):
         self.config_path = config_path
         self.config = {}
         self.api_config = {}  # 云侧API配置
+        self.font_sizes = get_font_sizes()
+        self.window_sizes = get_window_sizes()
+        self.icon_sizes = get_icon_sizes()
         self.load_config()
 
         self.setWindowTitle("设置")
-        self.setMinimumSize(600, 500)
-        self.resize(700, 600)
+        # 使用自适应窗口大小
+        self.setMinimumSize(
+            self.window_sizes['settings_width'],
+            self.window_sizes['settings_height']
+        )
+        self.resize(
+            int(self.window_sizes['settings_width'] * 1.1),
+            int(self.window_sizes['settings_height'] * 1.2)
+        )
 
         self.init_ui()
 
@@ -109,10 +121,12 @@ class SettingsDialog(QDialog):
         button_layout.addStretch()
 
         save_btn = QPushButton("保存")
+        save_btn.setMinimumHeight(self.window_sizes['button_height'])
         save_btn.clicked.connect(self.on_save)
         button_layout.addWidget(save_btn)
 
         cancel_btn = QPushButton("取消")
+        cancel_btn.setMinimumHeight(self.window_sizes['button_height'])
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
 
@@ -350,7 +364,7 @@ class SettingsDialog(QDialog):
 
         # 添加说明标签
         hint_label = QLabel("注：仅对图片文件生效，PDF/PPT/Word中的图片始终使用OCR")
-        hint_label.setStyleSheet("color: gray; font-size: 11px;")
+        hint_label.setStyleSheet(f"color: gray; font-size: {self.font_sizes['small']}px;")
         extraction_layout.addWidget(hint_label)
 
         layout.addWidget(extraction_group)

@@ -13,6 +13,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QIcon
 
+from .utils import get_font_sizes, get_window_sizes, get_icon_sizes
+
 
 class CategorySystem:
     """类别体系数据结构"""
@@ -49,13 +51,21 @@ class CategorySystemPanel(QWidget):
         super().__init__(parent)
         self.category_systems: Dict[str, CategorySystem] = {}  # name -> CategorySystem
         self.current_system: Optional[CategorySystem] = None
+        self.font_sizes = get_font_sizes()
+        self.icon_sizes = get_icon_sizes()
+        self.window_sizes = get_window_sizes()
         self.init_ui()
 
     def init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(5)
+        layout.setContentsMargins(
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small'],
+            self.window_sizes['margin_small']
+        )
+        layout.setSpacing(self.window_sizes['spacing_small'])
 
         # 头部区域
         header = QWidget()
@@ -63,27 +73,28 @@ class CategorySystemPanel(QWidget):
         header_layout.setContentsMargins(0, 0, 0, 0)
 
         title_label = QLabel("📁 类别体系")
-        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        title_label.setStyleSheet(f"font-weight: bold; font-size: {self.font_sizes['title']}px;")
         header_layout.addWidget(title_label)
 
         header_layout.addStretch()
 
         # 添加类别体系按钮
+        btn_size = self.icon_sizes['small']
         add_btn = QPushButton("+")
         add_btn.setToolTip("添加类别体系")
-        add_btn.setFixedSize(24, 24)
-        add_btn.setStyleSheet("""
-            QPushButton {
+        add_btn.setFixedSize(btn_size, btn_size)
+        add_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #4CAF50;
                 color: white;
                 border: none;
-                border-radius: 12px;
-                font-size: 16px;
+                border-radius: {btn_size // 2}px;
+                font-size: {self.font_sizes['icon_small']}px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 background-color: #388E3C;
-            }
+            }}
         """)
         add_btn.clicked.connect(self.on_add_system)
         header_layout.addWidget(add_btn)
@@ -103,29 +114,29 @@ class CategorySystemPanel(QWidget):
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
 
-        self.tree.setStyleSheet("""
-            QTreeWidget {
+        self.tree.setStyleSheet(f"""
+            QTreeWidget {{
                 border: 1px solid #ddd;
                 border-radius: 4px;
-                font-size: 12px;
-            }
-            QTreeWidget::item {
+                font-size: {self.font_sizes['tree']}px;
+            }}
+            QTreeWidget::item {{
                 padding: 5px;
-            }
-            QTreeWidget::item:hover {
+            }}
+            QTreeWidget::item:hover {{
                 background-color: #f5f5f5;
-            }
-            QTreeWidget::item:selected {
+            }}
+            QTreeWidget::item:selected {{
                 background-color: #e3f2fd;
                 color: #1976D2;
-            }
+            }}
         """)
 
         layout.addWidget(self.tree)
 
         # 状态标签
         self.status_label = QLabel("暂无类别体系")
-        self.status_label.setStyleSheet("color: #999; font-size: 12px;")
+        self.status_label.setStyleSheet(f"color: #999; font-size: {self.font_sizes['normal']}px;")
         layout.addWidget(self.status_label)
 
         self.setStyleSheet("""
@@ -293,7 +304,10 @@ class CategorySystemSelectDialog(QDialog):
     def __init__(self, category_systems: List[CategorySystem], parent=None):
         super().__init__(parent)
         self.setWindowTitle("选择类别体系")
-        self.setMinimumWidth(300)
+        self.font_sizes = get_font_sizes()
+        self.icon_sizes = get_icon_sizes()
+        self.window_sizes = get_window_sizes()
+        self.setMinimumWidth(self.window_sizes['dialog_width'])
 
         self.selected_system: Optional[CategorySystem] = None
         self.category_systems = category_systems
@@ -303,22 +317,23 @@ class CategorySystemSelectDialog(QDialog):
     def init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
+        layout.setSpacing(self.window_sizes['spacing_normal'])
 
         # 提示标签
         label = QLabel("请选择要使用的类别体系:")
-        label.setStyleSheet("font-size: 12px;")
+        label.setStyleSheet(f"font-size: {self.font_sizes['normal']}px;")
         layout.addWidget(label)
 
         # 类别体系下拉框
         self.combo = QComboBox()
-        self.combo.setStyleSheet("""
-            QComboBox {
+        self.combo.setMinimumHeight(self.window_sizes['input_height'])
+        self.combo.setStyleSheet(f"""
+            QComboBox {{
                 padding: 8px;
                 border: 1px solid #ddd;
                 border-radius: 4px;
-                font-size: 12px;
-            }
+                font-size: {self.font_sizes['normal']}px;
+            }}
         """)
 
         for system in self.category_systems:
@@ -328,17 +343,17 @@ class CategorySystemSelectDialog(QDialog):
 
         # 预览区域
         preview_label = QLabel("类别预览:")
-        preview_label.setStyleSheet("font-size: 12px; margin-top: 10px;")
+        preview_label.setStyleSheet(f"font-size: {self.font_sizes['normal']}px; margin-top: 10px;")
         layout.addWidget(preview_label)
 
         self.preview_text = QLabel()
-        self.preview_text.setStyleSheet("""
-            QLabel {
+        self.preview_text.setStyleSheet(f"""
+            QLabel {{
                 background-color: #f5f5f5;
                 padding: 10px;
                 border-radius: 4px;
-                font-size: 11px;
-            }
+                font-size: {self.font_sizes['small']}px;
+            }}
         """)
         self.preview_text.setWordWrap(True)
         layout.addWidget(self.preview_text)
@@ -352,33 +367,37 @@ class CategorySystemSelectDialog(QDialog):
         btn_layout.addStretch()
 
         cancel_btn = QPushButton("取消")
-        cancel_btn.setStyleSheet("""
-            QPushButton {
+        cancel_btn.setMinimumHeight(self.window_sizes['button_height'])
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #f5f5f5;
                 color: #333;
                 padding: 8px 20px;
                 border: 1px solid #ddd;
                 border-radius: 4px;
-            }
-            QPushButton:hover {
+                font-size: {self.font_sizes['button']}px;
+            }}
+            QPushButton:hover {{
                 background-color: #e0e0e0;
-            }
+            }}
         """)
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
 
         ok_btn = QPushButton("确定")
-        ok_btn.setStyleSheet("""
-            QPushButton {
+        ok_btn.setMinimumHeight(self.window_sizes['button_height'])
+        ok_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #2196F3;
                 color: white;
                 padding: 8px 20px;
                 border: none;
                 border-radius: 4px;
-            }
-            QPushButton:hover {
+                font-size: {self.font_sizes['button']}px;
+            }}
+            QPushButton:hover {{
                 background-color: #1976D2;
-            }
+            }}
         """)
         ok_btn.clicked.connect(self.on_accept)
         btn_layout.addWidget(ok_btn)
