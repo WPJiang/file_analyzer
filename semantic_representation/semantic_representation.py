@@ -868,16 +868,18 @@ class SemanticRepresentation:
             processing_logger.log_step("文本提取方式", f"use_caption={use_caption} (is_image_file={is_image_file}, method={image_extraction_method})")
 
             if use_caption:
-                # 使用Caption模式：先检查数据库是否已有caption和tags
+                # 使用Caption模式：先检查metadata是否已有caption和tags
                 existing_caption = None
                 existing_tags = None
 
                 if db_manager and file_id:
                     try:
                         file_record = db_manager.get_file_by_id(file_id)
-                        if file_record:
-                            existing_caption = file_record.caption_text
-                            existing_tags = file_record.image_tags
+                        if file_record and file_record.metadata:
+                            # metadata是字典，从中读取caption和tags
+                            existing_metadata = file_record.metadata
+                            existing_caption = existing_metadata.get('caption')
+                            existing_tags = existing_metadata.get('tags')
                             processing_logger.log_step("检查已有Caption", f"caption存在: {bool(existing_caption)}, tags存在: {bool(existing_tags)}")
                     except Exception as e:
                         processing_logger.log_step("检查已有Caption", f"查询失败: {e}")
@@ -900,19 +902,26 @@ class SemanticRepresentation:
 
                         if caption_result:
                             text_content = caption_result.get('caption', '')
-                            processing_logger.log_step("Caption生成完成", f"caption长度: {len(text_content)}")
+                            tags = caption_result.get('tags', [])
+                            processing_logger.log_step("Caption生成完成", f"caption长度: {len(text_content)}, tags数量: {len(tags)}")
 
-                            # 保存到数据库
+                            # 保存到数据库metadata字段
                             if db_manager and file_id:
                                 from database import CaptionAnalysisStatus
-                                status = CaptionAnalysisStatus.ANALYZED_HAS_INFO if (text_content or caption_result.get('tags')) else CaptionAnalysisStatus.ANALYZED_FAILED
-                                db_manager.update_caption_and_tags(
-                                    file_id=file_id,
-                                    caption=text_content,
-                                    tags=caption_result.get('tags', []),
-                                    status=status
-                                )
-                                processing_logger.log_step("保存Caption", f"已保存到数据库，状态: {status}")
+                                # 判断是否有有效信息
+                                has_info = bool(text_content or tags)
+                                status = CaptionAnalysisStatus.ANALYZED_HAS_INFO if has_info else CaptionAnalysisStatus.ANALYZED_FAILED
+
+                                # 更新caption_analysis_status
+                                db_manager.update_caption_status(file_id, status)
+
+                                # 获取当前metadata并更新
+                                current_file_record = db_manager.get_file_by_id(file_id)
+                                existing_metadata = current_file_record.metadata if current_file_record and current_file_record.metadata else {}
+                                existing_metadata['caption'] = text_content
+                                existing_metadata['tags'] = tags
+                                db_manager.update_file_metadata(file_id, existing_metadata)
+                                processing_logger.log_step("保存Caption", f"已保存到metadata，状态: {status}")
                         else:
                             # caption失败，降级到OCR
                             processing_logger.log_step("Caption失败", "降级使用OCR")

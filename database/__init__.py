@@ -1,3 +1,3 @@
-from .database import DatabaseManager, FileStatus
+from .database import DatabaseManager, FileStatus, CaptionAnalysisStatus
 
-__all__ = ['DatabaseManager', 'FileStatus']
+__all__ = ['DatabaseManager', 'FileStatus', 'CaptionAnalysisStatus']
