@@ -588,8 +588,9 @@ class ClassificationPanel(QWidget):
                 file_item.setData(0, Qt.UserRole + 1, file_info.get('path', ''))
 
                 tooltip_parts = [file_info.get('path', '')]
-                tooltip_parts.append(f"\n共 {total_blocks} 个语义块")
-                tooltip_parts.append("\n类别分布:")
+                tooltip_parts.append(f"文件ID: {file_info.get('file_id', 'N/A')}")
+                tooltip_parts.append(f"共 {total_blocks} 个语义块")
+                tooltip_parts.append("类别分布:")
                 for cat_info in categories:
                     tooltip_parts.append(f"  • {cat_info['category']}: {cat_info['confidence']:.1%} ({cat_info['block_count']}块)")
                 file_item.setToolTip(0, '\n'.join(tooltip_parts))
@@ -842,16 +843,21 @@ class ClassificationPanel(QWidget):
             current_system_cats.sort(key=lambda x: x.get('confidence', 0), reverse=True)
             primary_category = current_system_cats[0]['category'] if current_system_cats else '未分类'
 
+            # 获取该文件的语义块数量
+            semantic_blocks = db_manager.get_semantic_blocks_by_file(file_record.id)
+            total_blocks = len(semantic_blocks) if semantic_blocks else 0
+
             # 添加到结果中
             if primary_category not in results:
                 results[primary_category] = []
 
             results[primary_category].append({
+                'file_id': file_record.id,
                 'path': file_record.file_path,
                 'categories': current_system_cats,
                 'primary_category': primary_category,
                 'primary_confidence': current_system_cats[0].get('confidence', 0) if current_system_cats else 0,
-                'total_blocks': len(semantic_categories),
+                'total_blocks': total_blocks,
                 'category_system_name': category_system_name
             })
 
