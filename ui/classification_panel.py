@@ -333,10 +333,31 @@ class ClassificationPanel(QWidget):
                 system_item.setForeground(0, QColor("#2196F3"))
                 self.category_system_tree.expandItem(system_item)
 
+            # 从数据库获取类别来源信息
+            category_sources = {}
+            if self.db_manager:
+                try:
+                    db_categories = self.db_manager.get_semantic_categories_by_system(name)
+                    for cat in db_categories:
+                        category_sources[cat.category_name] = cat.category_source
+                except Exception:
+                    pass  # 如果数据库查询失败，忽略错误
+
             # 添加类别子节点
             for category in system.categories:
                 cat_item = QTreeWidgetItem(system_item)
-                cat_item.setText(0, f"📂 {category}")
+
+                # 添加来源标记
+                source = category_sources.get(category, 'imported')
+                source_mark = ''
+                if source == 'predefined':
+                    source_mark = ' [预定义]'
+                elif source == 'imported':
+                    source_mark = ' [导入]'
+                elif source == 'generated':
+                    source_mark = ' [自动]'
+
+                cat_item.setText(0, f"📂 {category}{source_mark}")
                 cat_item.setData(0, Qt.UserRole, "category")
                 cat_item.setData(0, Qt.UserRole + 1, category)
 
@@ -355,6 +376,9 @@ class ClassificationPanel(QWidget):
 
         try:
             for name, system in self.category_systems.items():
+                # 判断类别来源：默认类别体系为predefined，其他为imported
+                category_source = 'predefined' if name == "默认类别体系" else 'imported'
+
                 # 保存每个类别到语义类别表
                 for category in system.categories:
                     # 获取类别的描述和关键词
@@ -366,7 +390,8 @@ class ClassificationPanel(QWidget):
                         category_name=category,
                         description=description,
                         keywords=keywords,
-                        category_system_name=name
+                        category_system_name=name,
+                        category_source=category_source
                     )
                     total_categories += 1
                 saved_count += 1
