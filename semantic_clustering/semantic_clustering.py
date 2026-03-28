@@ -364,9 +364,45 @@ class SemanticClustering:
             return []
 
         X = np.array(vectors)
+        n_clusters = len(self._category_vectors)
+
+        # 如果样本数量小于聚类数量，使用距离匹配代替KMeans
+        if len(vectors) < n_clusters:
+            # 使用距离匹配
+            results = []
+            for block, vector in zip(valid_blocks, vectors):
+                distances = []
+                for j, center in enumerate(self._category_vectors):
+                    dist = self._compute_distance(vector, center)
+                    distances.append((j, dist))
+
+                distances.sort(key=lambda x: x[1])
+                best_idx, best_dist = distances[0]
+
+                confidence = self._compute_confidence(distances)
+
+                results.append(ClusterResult(
+                    block_id=block.block_id,
+                    cluster_id=best_idx,
+                    cluster_name=self.categories[best_idx].name,
+                    confidence=confidence,
+                    distance_to_center=best_dist
+                ))
+
+            # 处理无效块
+            for block in blocks:
+                if block not in valid_blocks:
+                    results.append(ClusterResult(
+                        block_id=block.block_id,
+                        cluster_id=-1,
+                        cluster_name="未分类",
+                        confidence=0.0,
+                        distance_to_center=float('inf')
+                    ))
+
+            return results
 
         # 初始化KMeans，使用已有类别中心作为初始中心
-        n_clusters = len(self._category_vectors)
         initial_centers = np.array(self._category_vectors)
 
         kmeans = KMeans(
