@@ -2203,121 +2203,252 @@ class MainWindow(QMainWindow):
 
         self.statusbar.showMessage(f"正在使用 '{category_system_name}' 进行分类...")
 
+        # 获取分类方法配置
+        classification_method = self.config.get('classification', {}).get('method', 'similarity')
+
         try:
-            # 使用语义分类器进行分类
-            from semantic_classification import SemanticClassification
+            if classification_method == 'clustering':
+                # 使用语义聚类分类
+                from semantic_clustering import SemanticClustering
 
-            classifier = SemanticClassification()
-            classifier.initialize()
+                clustering = SemanticClustering(
+                    config=self.config.get('clustering', {}),
+                    db_manager=self.db_manager
+                )
 
-            # 设置自定义类别
-            classifier.set_categories(categories)
+                # 准备类别数据
+                predefined_categories = []
+                for cat_name in categories:
+                    cat_info = category_system.category_info.get(cat_name, {})
+                    predefined_categories.append({
+                        'name': cat_name,
+                        'description': cat_info.get('description', ''),
+                        'keywords': cat_info.get('keywords', [])
+                    })
 
-            for file_record in pending_records:
-                try:
-                    file_id = file_record.id
-                    file_path = file_record.file_path
+                clustering.initialize(
+                    category_system_name=category_system_name,
+                    predefined_categories=predefined_categories
+                )
 
-                    # 获取文件的语义块记录（数据库记录）
-                    semantic_block_records = self.db_manager.get_semantic_blocks_by_file(file_id)
+                # 分类循环 - 使用聚类
+                for file_record in pending_records:
+                    try:
+                        file_id = file_record.id
+                        file_path = file_record.file_path
 
-                    if not semantic_block_records:
-                        print(f"[DEBUG] 文件 {file_path} 没有语义块，跳过")
-                        continue
+                        # 获取文件的语义块记录
+                        semantic_block_records = self.db_manager.get_semantic_blocks_by_file(file_id)
 
-                    # 将 SemanticBlockRecord 转换为 SemanticBlock
-                    import numpy as np
-                    from semantic_representation import SemanticBlock
+                        if not semantic_block_records:
+                            print(f"[DEBUG] 文件 {file_path} 没有语义块，跳过")
+                            continue
 
-                    semantic_blocks = []
-                    for record in semantic_block_records:
-                        # 将 bytes 转换为 numpy array
-                        semantic_vector = None
-                        if record.semantic_vector:
-                            try:
-                                semantic_vector = np.frombuffer(record.semantic_vector, dtype=np.float32)
-                            except Exception as e:
-                                print(f"[DEBUG] 向量转换失败: {e}")
+                        # 将 SemanticBlockRecord 转换为 SemanticBlock
+                        import numpy as np
+                        from semantic_representation import SemanticBlock
 
-                        sb = SemanticBlock(
-                            block_id=record.semantic_block_id,
-                            text_description=record.text_description,
-                            keywords=record.keywords,
-                            semantic_vector=semantic_vector,
-                            modality="text",
-                            original_metadata={}
-                        )
-                        semantic_blocks.append(sb)
+                        semantic_blocks = []
+                        for record in semantic_block_records:
+                            semantic_vector = None
+                            if record.semantic_vector:
+                                try:
+                                    semantic_vector = np.frombuffer(record.semantic_vector, dtype=np.float32)
+                                except Exception as e:
+                                    print(f"[DEBUG] 向量转换失败: {e}")
 
-                    # 执行分类，传入类别体系名称
-                    class_results = classifier.classify_batch(
-                        semantic_blocks, self.db_manager, file_id,
-                        category_system_name=category_system_name
-                    )
+                            sb = SemanticBlock(
+                                block_id=record.semantic_block_id,
+                                text_description=record.text_description,
+                                keywords=record.keywords,
+                                semantic_vector=semantic_vector,
+                                modality="text",
+                                original_metadata={}
+                            )
+                            semantic_blocks.append(sb)
 
-                    # 统计分类结果
-                    file_categories = {}
-                    total_confidence = 0.0
+                        # 使用KMeans聚类
+                        class_results = clustering.cluster_with_kmeans(semantic_blocks)
 
-                    for _, result in zip(semantic_blocks, class_results):
-                        category = result.category_name
-                        conf = result.confidence
-                        total_confidence += conf
+                        # 统计分类结果
+                        file_categories = {}
+                        total_confidence = 0.0
 
-                        if category not in file_categories:
-                            file_categories[category] = {
-                                'confidence_sum': 0.0,
-                                'block_count': 0
-                            }
+                        for result in class_results:
+                            category = result.cluster_name
+                            conf = result.confidence
+                            total_confidence += conf
 
-                        file_categories[category]['confidence_sum'] += conf
-                        file_categories[category]['block_count'] += 1
+                            if category not in file_categories:
+                                file_categories[category] = {
+                                    'confidence_sum': 0.0,
+                                    'block_count': 0
+                                }
 
-                    # 生成当前类别体系的分类结果列表
-                    current_system_results = []
-                    for cat, data in file_categories.items():
-                        normalized_conf = data['confidence_sum'] / total_confidence if total_confidence > 0 else 0
-                        current_system_results.append({
-                            'category': cat,
-                            'confidence': normalized_conf,
-                            'block_count': data['block_count'],
+                            file_categories[category]['confidence_sum'] += conf
+                            file_categories[category]['block_count'] += 1
+
+                        # 生成当前类别体系的分类结果列表
+                        current_system_results = []
+                        for cat, data in file_categories.items():
+                            normalized_conf = data['confidence_sum'] / total_confidence if total_confidence > 0 else 0
+                            current_system_results.append({
+                                'category': cat,
+                                'confidence': normalized_conf,
+                                'block_count': data['block_count'],
+                                'category_system_name': category_system_name
+                            })
+
+                        current_system_results.sort(key=lambda x: x['confidence'], reverse=True)
+
+                        primary_category = current_system_results[0]['category'] if current_system_results else '未分类'
+
+                        # 获取原有的分类结果，追加新的分类结果
+                        existing_categories = list(file_record.semantic_categories or [])
+                        # 移除同一类别体系的旧结果（如果存在）
+                        existing_categories = [
+                            cat for cat in existing_categories
+                            if cat.get('category_system_name') != category_system_name
+                        ]
+                        # 合并新旧结果
+                        updated_categories = existing_categories + current_system_results
+
+                        # 更新数据库
+                        self.db_manager.update_file_semantic_categories(file_id, updated_categories)
+
+                        # 添加到结果（用于UI显示）
+                        if primary_category not in results:
+                            results[primary_category] = []
+
+                        results[primary_category].append({
+                            'path': file_path,
+                            'categories': current_system_results,
+                            'primary_category': primary_category,
+                            'primary_confidence': current_system_results[0]['confidence'] if current_system_results else 0,
+                            'total_blocks': len(semantic_blocks),
                             'category_system_name': category_system_name
                         })
 
-                    current_system_results.sort(key=lambda x: x['confidence'], reverse=True)
+                    except Exception as e:
+                        print(f"[DEBUG] 分类文件失败 {file_record.file_path}: {e}")
+                        import traceback
+                        traceback.print_exc()
 
-                    primary_category = current_system_results[0]['category'] if current_system_results else '未分类'
+            else:
+                # 使用语义相似度或LLM分类
+                from semantic_classification import SemanticClassification
 
-                    # 获取原有的分类结果，追加新的分类结果
-                    existing_categories = list(file_record.semantic_categories or [])
-                    # 移除同一类别体系的旧结果（如果存在）
-                    existing_categories = [
-                        cat for cat in existing_categories
-                        if cat.get('category_system_name') != category_system_name
-                    ]
-                    # 合并新旧结果
-                    updated_categories = existing_categories + current_system_results
+                classifier = SemanticClassification()
+                classifier.initialize()
 
-                    # 更新数据库
-                    self.db_manager.update_file_semantic_categories(file_id, updated_categories)
+                # 设置自定义类别
+                classifier.set_categories(categories)
 
-                    # 添加到结果（用于UI显示）
-                    if primary_category not in results:
-                        results[primary_category] = []
+                for file_record in pending_records:
+                    try:
+                        file_id = file_record.id
+                        file_path = file_record.file_path
 
-                    results[primary_category].append({
-                        'path': file_path,
-                        'categories': current_system_results,
-                        'primary_category': primary_category,
-                        'primary_confidence': current_system_results[0]['confidence'] if current_system_results else 0,
-                        'total_blocks': len(semantic_blocks),
-                        'category_system_name': category_system_name
-                    })
+                        # 获取文件的语义块记录（数据库记录）
+                        semantic_block_records = self.db_manager.get_semantic_blocks_by_file(file_id)
 
-                except Exception as e:
-                    print(f"[DEBUG] 分类文件失败 {file_record.file_path}: {e}")
-                    import traceback
-                    traceback.print_exc()
+                        if not semantic_block_records:
+                            print(f"[DEBUG] 文件 {file_path} 没有语义块，跳过")
+                            continue
+
+                        # 将 SemanticBlockRecord 转换为 SemanticBlock
+                        import numpy as np
+                        from semantic_representation import SemanticBlock
+
+                        semantic_blocks = []
+                        for record in semantic_block_records:
+                            # 将 bytes 转换为 numpy array
+                            semantic_vector = None
+                            if record.semantic_vector:
+                                try:
+                                    semantic_vector = np.frombuffer(record.semantic_vector, dtype=np.float32)
+                                except Exception as e:
+                                    print(f"[DEBUG] 向量转换失败: {e}")
+
+                            sb = SemanticBlock(
+                                block_id=record.semantic_block_id,
+                                text_description=record.text_description,
+                                keywords=record.keywords,
+                                semantic_vector=semantic_vector,
+                                modality="text",
+                                original_metadata={}
+                            )
+                            semantic_blocks.append(sb)
+
+                        # 执行分类，传入类别体系名称
+                        class_results = classifier.classify_batch(
+                            semantic_blocks, self.db_manager, file_id,
+                            category_system_name=category_system_name
+                        )
+
+                        # 统计分类结果
+                        file_categories = {}
+                        total_confidence = 0.0
+
+                        for _, result in zip(semantic_blocks, class_results):
+                            category = result.category_name
+                            conf = result.confidence
+                            total_confidence += conf
+
+                            if category not in file_categories:
+                                file_categories[category] = {
+                                    'confidence_sum': 0.0,
+                                    'block_count': 0
+                                }
+
+                            file_categories[category]['confidence_sum'] += conf
+                            file_categories[category]['block_count'] += 1
+
+                        # 生成当前类别体系的分类结果列表
+                        current_system_results = []
+                        for cat, data in file_categories.items():
+                            normalized_conf = data['confidence_sum'] / total_confidence if total_confidence > 0 else 0
+                            current_system_results.append({
+                                'category': cat,
+                                'confidence': normalized_conf,
+                                'block_count': data['block_count'],
+                                'category_system_name': category_system_name
+                            })
+
+                        current_system_results.sort(key=lambda x: x['confidence'], reverse=True)
+
+                        primary_category = current_system_results[0]['category'] if current_system_results else '未分类'
+
+                        # 获取原有的分类结果，追加新的分类结果
+                        existing_categories = list(file_record.semantic_categories or [])
+                        # 移除同一类别体系的旧结果（如果存在）
+                        existing_categories = [
+                            cat for cat in existing_categories
+                            if cat.get('category_system_name') != category_system_name
+                        ]
+                        # 合并新旧结果
+                        updated_categories = existing_categories + current_system_results
+
+                        # 更新数据库
+                        self.db_manager.update_file_semantic_categories(file_id, updated_categories)
+
+                        # 添加到结果（用于UI显示）
+                        if primary_category not in results:
+                            results[primary_category] = []
+
+                        results[primary_category].append({
+                            'path': file_path,
+                            'categories': current_system_results,
+                            'primary_category': primary_category,
+                            'primary_confidence': current_system_results[0]['confidence'] if current_system_results else 0,
+                            'total_blocks': len(semantic_blocks),
+                            'category_system_name': category_system_name
+                        })
+
+                    except Exception as e:
+                        print(f"[DEBUG] 分类文件失败 {file_record.file_path}: {e}")
+                        import traceback
+                        traceback.print_exc()
 
             # 更新UI - 显示当前类别体系的所有分类结果
             self.classification_panel.show_classification_results_for_system(
