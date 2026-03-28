@@ -1,3 +1,3 @@
-from .database import DatabaseManager, FileStatus, CaptionAnalysisStatus
+from .database import DatabaseManager, FileStatus, CaptionAnalysisStatus, SemanticCategoryRecord
 
-__all__ = ['DatabaseManager', 'FileStatus', 'CaptionAnalysisStatus']
+__all__ = ['DatabaseManager', 'FileStatus', 'CaptionAnalysisStatus', 'SemanticCategoryRecord']
