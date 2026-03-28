@@ -405,7 +405,10 @@
     },
     "clustering": {
         "distance_metric": "cosine",
-        "description": "聚类距离度量: 'cosine', 'euclidean', 'manhattan'"
+        "incremental_cluster_ratio": 0.1,
+        "max_incremental_clusters": 20,
+        "min_incremental_clusters": 1,
+        "description": "聚类配置: distance_metric为距离度量, incremental_cluster_ratio为增量簇比例(k的10%), max/min_incremental_clusters为增量簇数量上下限"
     },
     "parsing": {
         "mode": 1,
