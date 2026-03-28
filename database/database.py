@@ -91,6 +91,8 @@ class SemanticCategoryRecord:
     description: str
     keywords: List[str]
     category_system_name: str  # 所属类别体系名称
+    category_source: str  # 类别来源: 'predefined'(预定义), 'imported'(人工导入), 'generated'(随机生成)
+    semantic_vector: Optional[bytes]  # 语义向量(numpy array bytes)
     created_time: datetime
 
 
@@ -207,7 +209,9 @@ class DatabaseManager:
                 category_name TEXT NOT NULL,
                 description TEXT,
                 keywords TEXT,  -- JSON格式存储
-                category_system_name TEXT DEFAULT '默认类别体系',  -- 所属类别体系名称
+                category_system_name TEXT DEFAULT '默认类别体系',
+                category_source TEXT DEFAULT 'predefined',  -- 类别来源: predefined/imported/generated
+                semantic_vector BLOB,  -- numpy array bytes，存储类别中心向量
                 created_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(category_name, category_system_name)
             )
@@ -992,7 +996,9 @@ class DatabaseManager:
     
     def add_semantic_category(self, category_name: str, description: str = "",
                               keywords: Optional[List[str]] = None,
-                              category_system_name: str = "默认类别体系") -> int:
+                              category_system_name: str = "默认类别体系",
+                              category_source: str = "predefined",
+                              semantic_vector: Optional[bytes] = None) -> int:
         """添加语义类别
 
         Args:
@@ -1000,6 +1006,8 @@ class DatabaseManager:
             description: 类别描述
             keywords: 关键词列表
             category_system_name: 所属类别体系名称
+            category_source: 类别来源 - 'predefined'(预定义), 'imported'(人工导入), 'generated'(随机生成)
+            semantic_vector: 类别中心向量(numpy array bytes)
 
         Returns:
             类别ID
@@ -1010,9 +1018,10 @@ class DatabaseManager:
         try:
             cursor.execute('''
                 INSERT OR IGNORE INTO semantic_categories
-                (category_name, description, keywords, category_system_name)
-                VALUES (?, ?, ?, ?)
-            ''', (category_name, description, json.dumps(keywords or [], ensure_ascii=False), category_system_name))
+                (category_name, description, keywords, category_system_name, category_source, semantic_vector)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (category_name, description, json.dumps(keywords or [], ensure_ascii=False),
+                  category_system_name, category_source, semantic_vector))
             conn.commit()
 
             cursor.execute('SELECT id FROM semantic_categories WHERE category_name = ? AND category_system_name = ?',
@@ -1028,7 +1037,11 @@ class DatabaseManager:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('SELECT * FROM semantic_categories ORDER BY category_name')
+        cursor.execute('''
+            SELECT id, category_name, description, keywords, category_system_name,
+                   category_source, semantic_vector, created_time
+            FROM semantic_categories ORDER BY category_name
+        ''')
         rows = cursor.fetchall()
         return [self._row_to_semantic_category_record(row) for row in rows]
 
@@ -1045,12 +1058,71 @@ class DatabaseManager:
         cursor = conn.cursor()
 
         cursor.execute('''
-            SELECT * FROM semantic_categories
+            SELECT id, category_name, description, keywords, category_system_name,
+                   category_source, semantic_vector, created_time
+            FROM semantic_categories
             WHERE category_system_name = ?
             ORDER BY category_name
         ''', (category_system_name,))
         rows = cursor.fetchall()
         return [self._row_to_semantic_category_record(row) for row in rows]
+
+    def get_generated_categories_by_system(self, category_system_name: str) -> List[SemanticCategoryRecord]:
+        """获取指定类别体系的随机生成类别
+
+        Args:
+            category_system_name: 类别体系名称
+
+        Returns:
+            该类别体系下的所有随机生成类别
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT id, category_name, description, keywords, category_system_name,
+                   category_source, semantic_vector, created_time
+            FROM semantic_categories
+            WHERE category_system_name = ? AND category_source = 'generated'
+            ORDER BY id
+        ''', (category_system_name,))
+
+        records = []
+        for row in cursor.fetchall():
+            records.append(SemanticCategoryRecord(
+                id=row[0],
+                category_name=row[1],
+                description=row[2],
+                keywords=json.loads(row[3]) if row[3] else [],
+                category_system_name=row[4],
+                category_source=row[5] or 'predefined',
+                semantic_vector=row[6],
+                created_time=datetime.fromisoformat(row[7]) if row[7] else datetime.now()
+            ))
+        return records
+
+    def update_category_vector(self, category_id: int, semantic_vector: bytes) -> bool:
+        """更新类别语义向量
+
+        Args:
+            category_id: 类别ID
+            semantic_vector: 语义向量(numpy array bytes)
+
+        Returns:
+            是否更新成功
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                UPDATE semantic_categories SET semantic_vector = ? WHERE id = ?
+            ''', (semantic_vector, category_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"更新类别语义向量失败: {e}")
+            return False
 
     def get_all_category_systems(self) -> Dict[str, List[SemanticCategoryRecord]]:
         """获取所有类别体系及其类别
@@ -1102,12 +1174,25 @@ class DatabaseManager:
 
     def _row_to_semantic_category_record(self, row: sqlite3.Row) -> SemanticCategoryRecord:
         """将数据库行转换为SemanticCategoryRecord"""
+        # 兼容处理：如果列不存在则使用默认值
+        try:
+            category_source = row['category_source'] if 'category_source' in row.keys() else 'predefined'
+        except (KeyError, IndexError):
+            category_source = 'predefined'
+
+        try:
+            semantic_vector = row['semantic_vector'] if 'semantic_vector' in row.keys() else None
+        except (KeyError, IndexError):
+            semantic_vector = None
+
         return SemanticCategoryRecord(
             id=row['id'],
             category_name=row['category_name'],
             description=row['description'],
             keywords=json.loads(row['keywords'] or '[]'),
             category_system_name=row['category_system_name'] or '默认类别体系',
+            category_source=category_source or 'predefined',
+            semantic_vector=semantic_vector,
             created_time=row['created_time']
         )
     
