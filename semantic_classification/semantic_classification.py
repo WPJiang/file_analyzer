@@ -554,6 +554,11 @@ class SemanticClassification:
                         confidence=result.confidence,
                         all_scores=result.all_scores
                     )
+
+                    # 写入语义块metadata
+                    metadata = {category_system_name: result.all_scores}
+                    db_manager.update_semantic_block_metadata(result.block_id, metadata)
+
                     processing_logger.log_step("数据库写入", f"成功写入分类结果 {result.block_id}")
                 except Exception as e:
                     processing_logger.log_error(module_name, e, f"写入分类结果失败 {result.block_id}")

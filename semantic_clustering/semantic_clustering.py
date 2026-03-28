@@ -389,6 +389,18 @@ class SemanticClustering:
                     distance_to_center=best_dist
                 ))
 
+                # 计算与所有类别的相似度并写入metadata
+                if self.db_manager:
+                    all_similarities = {}
+                    for j, (cat_name, center) in enumerate(zip(self._category_names, self._category_vectors)):
+                        dist = self._compute_distance(vector, center)
+                        # 余弦距离转换为相似度: similarity = 1 - distance
+                        similarity = max(0.0, min(1.0, 1 - dist))
+                        all_similarities[cat_name] = similarity
+
+                    metadata = {self._category_system_name: all_similarities}
+                    self.db_manager.update_semantic_block_metadata(block.block_id, metadata)
+
             # 处理无效块
             for block in blocks:
                 if block not in valid_blocks:
@@ -427,9 +439,9 @@ class SemanticClustering:
 
         # 生成结果
         results = []
-        for block, label in zip(valid_blocks, labels):
+        for idx, (block, label) in enumerate(zip(valid_blocks, labels)):
             center = kmeans.cluster_centers_[label]
-            vec = block.semantic_vector if block.semantic_vector is not None else vectors[valid_blocks.index(block)]
+            vec = vectors[idx]
             dist = self._compute_distance(vec, center)
             confidence = self._compute_kmeans_confidence(X, labels, label, kmeans)
 
@@ -440,6 +452,17 @@ class SemanticClustering:
                 confidence=confidence,
                 distance_to_center=dist
             ))
+
+            # 计算与所有类别的相似度并写入metadata
+            if self.db_manager:
+                all_similarities = {}
+                for j, (cat_name, cat_center) in enumerate(zip(self._category_names, self._category_vectors)):
+                    cat_dist = self._compute_distance(vec, cat_center)
+                    similarity = max(0.0, min(1.0, 1 - cat_dist))
+                    all_similarities[cat_name] = similarity
+
+                metadata = {self._category_system_name: all_similarities}
+                self.db_manager.update_semantic_block_metadata(block.block_id, metadata)
 
         # 处理无效块
         for block in blocks:

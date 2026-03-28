@@ -81,6 +81,7 @@ class SemanticBlockRecord:
     semantic_vector: bytes  # numpy array bytes
     created_time: datetime
     semantic_filename: Optional[str] = None  # 语义文件名
+    metadata: Optional[Dict[str, Dict[str, float]]] = None  # {类别体系名: {类别名: 相似度}}
 
 
 @dataclass
@@ -198,6 +199,7 @@ class DatabaseManager:
                 semantic_vector BLOB,  -- numpy array bytes
                 created_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 semantic_filename TEXT,  -- 语义文件名
+                metadata TEXT,  -- JSON格式，存储类别相似度 {类别体系名: {类别名: 相似度}}
                 FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
             )
         ''')
@@ -255,8 +257,28 @@ class DatabaseManager:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_classification_file ON classification_results(file_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_queries_time ON user_queries(created_time)')
 
+        # 数据库迁移：添加缺失的列
+        self._run_migrations(cursor)
+
         conn.commit()
         print(f"数据库初始化完成: {self.db_path}")
+
+    def _run_migrations(self, cursor):
+        """运行数据库迁移"""
+        # 迁移1：semantic_categories表添加category_source和semantic_vector列
+        try:
+            cursor.execute("PRAGMA table_info(semantic_categories)")
+            columns = [col[1] for col in cursor.fetchall()]
+
+            if 'category_source' not in columns:
+                cursor.execute("ALTER TABLE semantic_categories ADD COLUMN category_source TEXT DEFAULT 'predefined'")
+                print("数据库迁移：添加semantic_categories.category_source列")
+
+            if 'semantic_vector' not in columns:
+                cursor.execute("ALTER TABLE semantic_categories ADD COLUMN semantic_vector BLOB")
+                print("数据库迁移：添加semantic_categories.semantic_vector列")
+        except Exception as e:
+            print(f"数据库迁移警告: {e}")
 
     # ==================== 文件表操作 ====================
     
@@ -773,7 +795,8 @@ class DatabaseManager:
                            file_id: int, text_description: str = "",
                            keywords: Optional[List[str]] = None,
                            semantic_vector: Optional[bytes] = None,
-                           semantic_filename: Optional[str] = None) -> int:
+                           semantic_filename: Optional[str] = None,
+                           metadata: Optional[Dict[str, Dict[str, float]]] = None) -> int:
         """添加语义块
 
         Args:
@@ -784,6 +807,7 @@ class DatabaseManager:
             keywords: 关键词列表
             semantic_vector: 语义向量
             semantic_filename: 语义文件名
+            metadata: 元数据，存储类别相似度 {类别体系名: {类别名: 相似度}}
 
         Returns:
             插入记录的ID，失败返回-1
@@ -794,12 +818,13 @@ class DatabaseManager:
         try:
             cursor.execute('''
                 INSERT INTO semantic_blocks
-                (semantic_block_id, data_block_ids, file_id, text_description, keywords, semantic_vector, semantic_filename)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (semantic_block_id, data_block_ids, file_id, text_description, keywords, semantic_vector, semantic_filename, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (semantic_block_id,
                   json.dumps(data_block_ids or [], ensure_ascii=False),
                   file_id, text_description,
-                  json.dumps(keywords or [], ensure_ascii=False), semantic_vector, semantic_filename))
+                  json.dumps(keywords or [], ensure_ascii=False), semantic_vector, semantic_filename,
+                  json.dumps(metadata) if metadata else None))
             conn.commit()
             return cursor.lastrowid
         except Exception as e:
@@ -819,6 +844,33 @@ class DatabaseManager:
 
         rows = cursor.fetchall()
         return [self._row_to_semantic_block_record(row) for row in rows]
+
+    def update_semantic_block_metadata(self, semantic_block_id: str,
+                                        metadata: Dict[str, Dict[str, float]]) -> bool:
+        """更新语义块元数据
+
+        Args:
+            semantic_block_id: 语义块ID
+            metadata: 元数据，存储类别相似度 {类别体系名: {类别名: 相似度}}
+
+        Returns:
+            成功返回True，失败返回False
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            metadata_json = json.dumps(metadata)
+            cursor.execute('''
+                UPDATE semantic_blocks SET metadata = ? WHERE semantic_block_id = ?
+            ''', (metadata_json, semantic_block_id))
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"更新语义块元数据失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
     def add_data_blocks_batch(self, blocks: List[Dict[str, Any]]) -> int:
         """批量添加数据块 - 性能优化版本
@@ -980,6 +1032,15 @@ class DatabaseManager:
         except (KeyError, IndexError):
             semantic_filename = None
 
+        # 解析metadata（JSON格式）
+        metadata = None
+        try:
+            metadata_str = row['metadata'] if 'metadata' in row.keys() else None
+            if metadata_str:
+                metadata = json.loads(metadata_str)
+        except (KeyError, IndexError, json.JSONDecodeError):
+            metadata = None
+
         return SemanticBlockRecord(
             id=row['id'],
             semantic_block_id=row['semantic_block_id'],
@@ -989,7 +1050,8 @@ class DatabaseManager:
             keywords=json.loads(row['keywords'] or '[]'),
             semantic_vector=row['semantic_vector'],
             created_time=row['created_time'],
-            semantic_filename=semantic_filename
+            semantic_filename=semantic_filename,
+            metadata=metadata
         )
     
     # ==================== 语义类别表操作 ====================

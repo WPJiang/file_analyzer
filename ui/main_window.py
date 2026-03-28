@@ -1830,7 +1830,17 @@ class MainWindow(QMainWindow):
         if file_record and file_record.metadata:
             metadata = file_record.metadata
 
-        self.preview_panel.preview_file(file_path, metadata)
+        # 获取当前类别体系名称
+        current_system = self.classification_panel.get_current_system()
+        category_system_name = current_system.name if current_system else None
+
+        # 预览文件，传递file_id和category_system_name
+        self.preview_panel.preview_file(
+            file_path,
+            file_record.id if file_record else None,
+            metadata,
+            category_system_name
+        )
     
     def on_search(self, query: str):
         """搜索回调 - 使用语义搜索"""

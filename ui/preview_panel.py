@@ -986,6 +986,8 @@ class PreviewPanel(QWidget):
         super().__init__(parent)
         self.current_file = None
         self.current_metadata = None
+        self.current_file_id = None
+        self.current_category_system = None
         self.preview_worker = None
         self.font_sizes = get_font_sizes()
         self.icon_sizes = get_icon_sizes()
@@ -1069,7 +1071,22 @@ class PreviewPanel(QWidget):
         self.stack.addWidget(self.loading_page)
         
         layout.addWidget(self.stack)
-        
+
+        # 语义块信息显示区域
+        self.semantic_blocks_label = QLabel("")
+        self.semantic_blocks_label.setStyleSheet(f"""
+            color: #555;
+            font-size: {self.font_sizes['normal']}px;
+            padding: 5px;
+            background-color: #f9f9f9;
+            border: 1px solid #eee;
+            border-radius: 4px;
+        """)
+        self.semantic_blocks_label.setWordWrap(True)
+        self.semantic_blocks_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.semantic_blocks_label.setVisible(False)  # 默认隐藏
+        layout.addWidget(self.semantic_blocks_label)
+
         # 设置样式
         self.setStyleSheet("""
             PreviewPanel {
@@ -1271,12 +1288,15 @@ class PreviewPanel(QWidget):
 
         return page
     
-    def preview_file(self, file_path: str, metadata: dict = None):
+    def preview_file(self, file_path: str, file_id: Optional[int] = None,
+                     metadata: dict = None, category_system_name: Optional[str] = None):
         """预览文件
 
         Args:
             file_path: 文件路径
+            file_id: 文件ID
             metadata: 文件元数据（包含caption、tags等）
+            category_system_name: 当前类别体系名称
         """
         if not file_path or not os.path.exists(file_path):
             self.stack.setCurrentIndex(0)  # 空白页面
@@ -1284,6 +1304,8 @@ class PreviewPanel(QWidget):
 
         self.current_file = file_path
         self.current_metadata = metadata
+        self.current_file_id = file_id
+        self.current_category_system = category_system_name
 
         # 更新文件信息
         file_name = os.path.basename(file_path)
@@ -1323,12 +1345,52 @@ class PreviewPanel(QWidget):
             self.show_shortcut_preview()
         else:
             self.stack.setCurrentIndex(8)  # 不支持页面
+
+        # 显示语义块信息
+        self._show_semantic_blocks_info()
     
     def on_preview_error(self, error_msg: str):
         """预览加载错误"""
         self.loading_label.setText(f"加载失败: {error_msg}")
         self.loading_bar.hide()
-    
+
+        # 显示语义块信息（即使预览失败也显示）
+        self._show_semantic_blocks_info()
+
+    def _show_semantic_blocks_info(self):
+        """显示语义块信息"""
+        if not self.current_file_id or not self.current_category_system:
+            self.semantic_blocks_label.setVisible(False)
+            return
+
+        from database import get_db_manager
+        db_manager = get_db_manager()
+
+        semantic_blocks = db_manager.get_semantic_blocks_by_file(self.current_file_id)
+
+        if not semantic_blocks:
+            self.semantic_blocks_label.setVisible(False)
+            return
+
+        # 构建显示文本
+        info_lines = ["语义块信息:"]
+        for block in semantic_blocks:
+            block_id = block.semantic_block_id
+            metadata = block.metadata
+
+            if metadata and self.current_category_system in metadata:
+                similarities = metadata[self.current_category_system]
+                # 格式化相似度显示，显示前3个最相似的类别
+                top_cats = sorted(similarities.items(), key=lambda x: -x[1])[:3]
+                sim_str = ", ".join([f"{cat}:{sim:.1%}" for cat, sim in top_cats])
+                info_lines.append(f"  {block_id[:20]}... | {sim_str}")
+            else:
+                info_lines.append(f"  {block_id[:20]}... | 无分类数据")
+
+        # 显示在信息区域
+        self.semantic_blocks_label.setText("\n".join(info_lines))
+        self.semantic_blocks_label.setVisible(True)
+
     def show_image_preview(self, pixmap: QPixmap):
         """显示图片预览"""
         # 缩放图片以适应窗口
