@@ -392,7 +392,8 @@ class SemanticClustering:
                 # 计算与所有类别的相似度并写入metadata
                 if self.db_manager:
                     all_similarities = {}
-                    for j, (cat_name, center) in enumerate(zip(self._category_names, self._category_vectors)):
+                    category_names = self.get_category_names()
+                    for j, (cat_name, center) in enumerate(zip(category_names, self._category_vectors)):
                         dist = self._compute_distance(vector, center)
                         # 余弦距离转换为相似度: similarity = 1 - distance
                         similarity = max(0.0, min(1.0, 1 - dist))
@@ -456,7 +457,8 @@ class SemanticClustering:
             # 计算与所有类别的相似度并写入metadata
             if self.db_manager:
                 all_similarities = {}
-                for j, (cat_name, cat_center) in enumerate(zip(self._category_names, self._category_vectors)):
+                category_names = self.get_category_names()
+                for j, (cat_name, cat_center) in enumerate(zip(category_names, self._category_vectors)):
                     cat_dist = self._compute_distance(vec, cat_center)
                     similarity = max(0.0, min(1.0, 1 - cat_dist))
                     all_similarities[cat_name] = similarity
