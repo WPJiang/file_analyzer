@@ -1530,6 +1530,7 @@ class MainWindow(QMainWindow):
 
         # 中间：预览窗口 - 设置最小高度
         self.preview_panel = PreviewPanel()
+        self.preview_panel.db_manager = self.db_manager  # 设置数据库管理器
         self.preview_panel.setMinimumHeight(window_sizes['main_height'] // 2)
         content_splitter.addWidget(self.preview_panel)
 
@@ -1833,6 +1834,12 @@ class MainWindow(QMainWindow):
         # 获取当前类别体系名称
         current_system = self.classification_panel.get_current_system()
         category_system_name = current_system.name if current_system else None
+
+        # 调试日志
+        print(f"[DEBUG] on_file_selected: file_path={file_path}")
+        print(f"[DEBUG] file_record.id={file_record.id if file_record else None}")
+        print(f"[DEBUG] current_system={current_system}")
+        print(f"[DEBUG] category_system_name={category_system_name}")
 
         # 预览文件，传递file_id和category_system_name
         self.preview_panel.preview_file(
@@ -2297,6 +2304,20 @@ class MainWindow(QMainWindow):
 
                             file_categories[category]['confidence_sum'] += conf
                             file_categories[category]['block_count'] += 1
+
+                        # 写入分类结果到classification_results表
+                        for result in class_results:
+                            try:
+                                self.db_manager.add_classification_result(
+                                    file_id=file_id,
+                                    semantic_block_id=result.block_id,
+                                    category_name=result.cluster_name,
+                                    category_system_name=category_system_name,
+                                    confidence=result.confidence,
+                                    all_scores={result.cluster_name: result.confidence}
+                                )
+                            except Exception as e:
+                                print(f"[DEBUG] 写入分类结果失败: {e}")
 
                         # 生成当前类别体系的分类结果列表
                         current_system_results = []

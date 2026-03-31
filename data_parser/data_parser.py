@@ -7,6 +7,7 @@ from .base_parser import BaseParser, DataBlock, ModalityType
 from .pdf_parser import PDFParser
 from .word_parser import WordParser
 from .ppt_parser import PPTParser
+from .excel_parser import ExcelParser
 from .image_parser import ImageParser
 from .audio_parser import AudioParser
 from .txt_parser import TXTParser
@@ -48,6 +49,8 @@ class DataParser:
         self._parsers['doc'] = WordParser()
         self._parsers['pptx'] = PPTParser()
         self._parsers['ppt'] = PPTParser()
+        self._parsers['xlsx'] = ExcelParser()
+        self._parsers['xls'] = ExcelParser()
         self._parsers['txt'] = TXTParser()
 
         image_config = parser_config.get('image', {})
@@ -363,6 +366,8 @@ class DataParser:
             return self._parsers.get('docx')
         elif ext in ['pptx', 'ppt']:
             return self._parsers.get('pptx')
+        elif ext in ['xlsx', 'xls']:
+            return self._parsers.get('xlsx')
         elif ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp']:
             return self._parsers.get('image')
         elif ext in ['wav', 'mp3', 'm4a', 'flac', 'ogg', 'aac']:
@@ -378,6 +383,7 @@ class DataParser:
         extensions.extend(['pdf'])
         extensions.extend(['docx', 'doc'])
         extensions.extend(['pptx', 'ppt'])
+        extensions.extend(['xlsx', 'xls'])
         extensions.extend(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp'])
         extensions.extend(['wav', 'mp3', 'm4a', 'flac', 'ogg', 'aac'])
         extensions.extend(['txt', 'md', 'log', 'csv'])

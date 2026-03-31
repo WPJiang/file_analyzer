@@ -824,7 +824,7 @@ class DatabaseManager:
                   json.dumps(data_block_ids or [], ensure_ascii=False),
                   file_id, text_description,
                   json.dumps(keywords or [], ensure_ascii=False), semantic_vector, semantic_filename,
-                  json.dumps(metadata) if metadata else None))
+                  json.dumps(metadata, ensure_ascii=False) if metadata else None))
             conn.commit()
             return cursor.lastrowid
         except Exception as e:
@@ -860,7 +860,7 @@ class DatabaseManager:
         cursor = conn.cursor()
 
         try:
-            metadata_json = json.dumps(metadata)
+            metadata_json = json.dumps(metadata, ensure_ascii=False)
             cursor.execute('''
                 UPDATE semantic_blocks SET metadata = ? WHERE semantic_block_id = ?
             ''', (metadata_json, semantic_block_id))

@@ -988,6 +988,7 @@ class PreviewPanel(QWidget):
         self.current_metadata = None
         self.current_file_id = None
         self.current_category_system = None
+        self.db_manager = None  # 数据库管理器，由外部设置
         self.preview_worker = None
         self.font_sizes = get_font_sizes()
         self.icon_sizes = get_icon_sizes()
@@ -1359,14 +1360,21 @@ class PreviewPanel(QWidget):
 
     def _show_semantic_blocks_info(self):
         """显示语义块信息"""
+        print(f"[DEBUG] _show_semantic_blocks_info: file_id={self.current_file_id}, category_system={self.current_category_system}")
+
         if not self.current_file_id or not self.current_category_system:
+            print(f"[DEBUG] 条件不满足，隐藏语义块信息")
             self.semantic_blocks_label.setVisible(False)
             return
 
-        from database import get_db_manager
-        db_manager = get_db_manager()
+        # 使用传入的 db_manager
+        if not self.db_manager:
+            print(f"[DEBUG] db_manager 未设置")
+            self.semantic_blocks_label.setVisible(False)
+            return
 
-        semantic_blocks = db_manager.get_semantic_blocks_by_file(self.current_file_id)
+        semantic_blocks = self.db_manager.get_semantic_blocks_by_file(self.current_file_id)
+        print(f"[DEBUG] 获取到 {len(semantic_blocks) if semantic_blocks else 0} 个语义块")
 
         if not semantic_blocks:
             self.semantic_blocks_label.setVisible(False)
@@ -1377,6 +1385,7 @@ class PreviewPanel(QWidget):
         for block in semantic_blocks:
             block_id = block.semantic_block_id
             metadata = block.metadata
+            print(f"[DEBUG] 语义块 {block_id}, metadata={metadata}")
 
             if metadata and self.current_category_system in metadata:
                 similarities = metadata[self.current_category_system]

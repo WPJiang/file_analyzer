@@ -816,6 +816,10 @@ class ClassificationPanel(QWidget):
         if not db_manager:
             return
 
+        # 设置当前类别体系（不发射信号，避免递归调用）
+        if category_system_name in self.category_systems:
+            self.current_system = self.category_systems[category_system_name]
+
         from database import FileStatus
 
         # 获取所有已完成初步分析的文件
