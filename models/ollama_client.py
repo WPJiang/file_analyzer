@@ -1,124 +1,103 @@
 """Ollama本地模型调用客户端
 
-封装本地Ollama运行的qwen3.5:0.8b模型调用接口，
-支持图片描述生成和图片分类功能。
+封装本地Ollama运行的模型调用接口，
+使用OpenAI兼容API格式，支持图片描述生成和图片分类功能。
 """
 
 import os
 import base64
 import json
-import requests
 from typing import Optional, List, Dict, Any
-from functools import lru_cache
 
 
 class OllamaClient:
     """Ollama API客户端
-    
-    封装与本地Ollama服务的交互，支持:
+
+    使用OpenAI兼容API格式调用Ollama服务，支持:
     1. 文本生成
     2. 图片描述生成
     3. 图片分类
+
+    Ollama默认在http://localhost:11434/v1提供OpenAI兼容API。
     """
-    
+
     _instance = None
-    
+
     def __new__(cls, base_url: str = "http://localhost:11434", model: str = "qwen3.5:0.8b"):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
-    
+
     def __init__(self, base_url: str = "http://localhost:11434", model: str = "qwen3.5:0.8b"):
         if self._initialized:
             return
 
+        # Ollama OpenAI兼容API端点
         self.base_url = base_url.rstrip('/')
+        self.api_base = f"{self.base_url}/v1"  # OpenAI兼容端点
         self.model = model
         self.timeout = 120
-        # keep_alive参数：让模型在内存中保持的时间，避免每次调用重新加载
-        # 默认10分钟，对于频繁调用的场景可以显著降低时延
         self.keep_alive = "10m"
-        # 缓存系统prompt对应的会话ID，用于复用上下文
-        self._session_cache: Dict[str, Any] = {}
-        self._initialized = True
 
-        print(f"[OllamaClient] 初始化完成，模型: {model}, 地址: {base_url}, keep_alive: {self.keep_alive}")
-    
+        # 初始化OpenAI客户端
+        self._init_client()
+
+        self._initialized = True
+        print(f"[OllamaClient] 初始化完成，模型: {model}, 地址: {self.api_base}")
+
+    def _init_client(self):
+        """初始化OpenAI客户端"""
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise ImportError("请安装openai库: pip install openai")
+
+        # 创建OpenAI客户端，指向Ollama的OpenAI兼容端点
+        self.client = OpenAI(
+            api_key="ollama",  # Ollama不需要API密钥，但OpenAI SDK需要提供
+            base_url=self.api_base,
+            timeout=self.timeout,
+        )
+
     def _encode_image_to_base64(self, image_path: str) -> str:
         """将图片编码为base64字符串
-        
+
         Args:
             image_path: 图片文件路径
-            
+
         Returns:
-            base64编码的图片字符串
+            base64编码的图片字符串（带data URI前缀）
         """
         with open(image_path, 'rb') as f:
             image_data = f.read()
-        return base64.b64encode(image_data).decode('utf-8')
-    
-    def _call_api(self, prompt: str, images: List[str] = None, stream: bool = False) -> Dict[str, Any]:
-        """调用Ollama API (generate接口)
 
-        Args:
-            prompt: 提示文本
-            images: base64编码的图片列表
-            stream: 是否使用流式输出
-
-        Returns:
-            API响应字典
-        """
-        url = f"{self.base_url}/api/generate"
-
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": stream,
-            "keep_alive": self.keep_alive  # 让模型在内存中保持
+        # 检测图片类型
+        ext = os.path.splitext(image_path)[1].lower()
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.bmp': 'image/bmp'
         }
+        mime_type = mime_types.get(ext, 'image/jpeg')
 
-        if images:
-            payload["images"] = images
+        base64_data = base64.b64encode(image_data).decode('utf-8')
+        return f"data:{mime_type};base64,{base64_data}"
 
-        try:
-            response = requests.post(url, json=payload, timeout=self.timeout)
-            response.raise_for_status()
-
-            if stream:
-                full_response = ""
-                for line in response.iter_lines():
-                    if line:
-                        data = json.loads(line)
-                        full_response += data.get("response", "")
-                return {"response": full_response}
-            else:
-                return response.json()
-
-        except requests.exceptions.ConnectionError:
-            raise ConnectionError(f"无法连接到Ollama服务，请确保Ollama正在运行: {self.base_url}")
-        except requests.exceptions.Timeout:
-            raise TimeoutError(f"Ollama API调用超时，超时时间: {self.timeout}秒")
-        except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Ollama API调用失败: {str(e)}")
-
-    def _call_chat_api(self, system_prompt: str, user_message: str, images: List[str] = None, stream: bool = False) -> Dict[str, Any]:
-        """调用Ollama Chat API，支持系统prompt缓存
-
-        使用/api/chat接口，将系统prompt和用户输入分离，
-        Ollama可以对系统prompt的KV cache进行缓存，降低时延。
+    def _call_chat_api(self, system_prompt: str, user_message: str, images: List[str] = None) -> Dict[str, Any]:
+        """调用Chat API
 
         Args:
-            system_prompt: 系统提示词（会被缓存）
+            system_prompt: 系统提示词
             user_message: 用户消息
             images: base64编码的图片列表
-            stream: 是否使用流式输出
 
         Returns:
             API响应字典
         """
-        url = f"{self.base_url}/api/chat"
-
         messages = []
 
         # 添加系统prompt
@@ -129,102 +108,86 @@ class OllamaClient:
             })
 
         # 添加用户消息
-        user_message_obj = {
-            "role": "user",
-            "content": user_message
-        }
-        # 图片附加到用户消息（Ollama期望纯base64，不带data URI前缀）
         if images:
-            # 处理可能包含data URI前缀的图片数据
-            pure_base64_images = []
-            for img in images:
-                if img.startswith('data:'):
-                    # 提取base64部分
-                    base64_part = img.split(',', 1)
-                    if len(base64_part) > 1:
-                        pure_base64_images.append(base64_part[1])
-                    else:
-                        pure_base64_images.append(img)
-                else:
-                    pure_base64_images.append(img)
-            user_message_obj["images"] = pure_base64_images
-        messages.append(user_message_obj)
-
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "stream": stream,
-            "keep_alive": self.keep_alive  # 让模型在内存中保持
-        }
+            # 多模态消息格式
+            content = [{"type": "text", "text": user_message}]
+            for image_data in images:
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": image_data}
+                })
+            messages.append({
+                "role": "user",
+                "content": content
+            })
+        else:
+            messages.append({
+                "role": "user",
+                "content": user_message
+            })
 
         try:
-            response = requests.post(url, json=payload, timeout=self.timeout)
-            response.raise_for_status()
+            # 使用OpenAI客户端调用
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=0.7
+            )
 
-            if stream:
-                full_response = ""
-                for line in response.iter_lines():
-                    if line:
-                        data = json.loads(line)
-                        if "message" in data:
-                            full_response += data["message"].get("content", "")
-                return {"response": full_response}
-            else:
-                result = response.json()
-                # 从chat响应中提取内容
-                if "message" in result:
-                    return {"response": result["message"].get("content", "")}
-                return result
+            # 提取响应内容
+            if response.choices and len(response.choices) > 0:
+                content = response.choices[0].message.content or ""
+                return {"response": content}
+            return {"response": ""}
 
-        except requests.exceptions.ConnectionError:
-            raise ConnectionError(f"无法连接到Ollama服务，请确保Ollama正在运行: {self.base_url}")
-        except requests.exceptions.Timeout:
-            raise TimeoutError(f"Ollama API调用超时，超时时间: {self.timeout}秒")
-        except requests.exceptions.RequestException as e:
+        except Exception as e:
             raise RuntimeError(f"Ollama API调用失败: {str(e)}")
-    
+
     def check_service_available(self) -> bool:
         """检查Ollama服务是否可用
-        
+
         Returns:
             服务是否可用
         """
         try:
-            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
-            return response.status_code == 200
-        except:
+            # 尝试简单聊天请求
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=10
+            )
+            return True
+        except Exception as e:
+            print(f"[OllamaClient] 服务不可用: {e}")
             return False
-    
+
     def list_models(self) -> List[str]:
         """列出可用的模型
-        
+
         Returns:
             模型名称列表
         """
         try:
-            response = requests.get(f"{self.base_url}/api/tags", timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            return [model["name"] for model in data.get("models", [])]
-        except:
+            models = self.client.models.list()
+            return [model.id for model in models.data]
+        except Exception as e:
+            print(f"[OllamaClient] 获取模型列表失败: {e}")
             return []
-    
+
     def generate_text(self, prompt: str) -> str:
         """生成文本
-        
+
         Args:
             prompt: 提示文本
-            
+
         Returns:
             生成的文本
         """
-        result = self._call_api(prompt)
+        result = self._call_chat_api("", prompt)
         return result.get("response", "").strip()
-    
+
     def generate_image_description(self, image_path: str, detail_level: str = "medium") -> str:
         """生成图片描述
-
-        使用chat接口分离系统prompt，支持prompt缓存优化。
 
         Args:
             image_path: 图片文件路径
@@ -238,7 +201,7 @@ class OllamaClient:
 
         image_base64 = self._encode_image_to_base64(image_path)
 
-        # 系统prompt（固定部分，可被缓存）
+        # 系统prompt
         system_prompt = """你是一个图片描述助手。请根据用户要求的详细程度，为图片生成描述。"""
 
         # 用户消息包含详细程度要求
@@ -253,21 +216,16 @@ class OllamaClient:
         # 使用chat接口调用
         result = self._call_chat_api(system_prompt, user_message, images=[image_base64])
         return result.get("response", "").strip()
-    
+
     def classify_image(self, image_path: str, categories: List[str] = None) -> Dict[str, Any]:
         """对图片进行分类
-
-        使用chat接口分离系统prompt和用户输入，支持prompt缓存优化。
 
         Args:
             image_path: 图片文件路径
             categories: 可选的分类列表，如果不提供则使用默认分类
 
         Returns:
-            分类结果字典，包含:
-            - category: 分类结果
-            - confidence: 置信度描述
-            - reasoning: 分类理由
+            分类结果字典
         """
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"图片文件不存在: {image_path}")
@@ -287,17 +245,14 @@ class OllamaClient:
                 "其他"
             ]
 
-        # 构建系统prompt（固定部分，可被缓存）
         categories_text = "、".join(categories)
         system_prompt = f"""你是一个图片分类助手。请根据给定的分类列表，为图片选择最合适的分类。
 可选分类：{categories_text}
 
 请直接回答分类名称，不需要解释。"""
 
-        # 用户消息（包含图片）
         user_message = "请对这张图片进行分类。"
 
-        # 使用chat接口调用，系统prompt可被缓存
         result = self._call_chat_api(system_prompt, user_message, images=[image_base64])
         response_text = result.get("response", "").strip()
 
@@ -314,23 +269,17 @@ class OllamaClient:
             "reasoning": reasoning,
             "all_categories": categories
         }
-    
+
     def classify_text(self, text: str, categories: List[str] = None, category_descriptions: Dict[str, str] = None) -> Dict[str, Any]:
         """对文本进行分类
 
-        使用chat接口分离系统prompt和用户输入，支持prompt缓存优化。
-
         Args:
             text: 待分类的文本内容
-            categories: 可选的分类列表，如果不提供则使用默认分类
-            category_descriptions: 可选的分类描述字典，用于提供更精确的分类依据
+            categories: 可选的分类列表
+            category_descriptions: 可选的分类描述字典
 
         Returns:
-            分类结果字典，包含:
-            - category: 分类结果
-            - confidence: 置信度 (0-1)
-            - reasoning: 分类理由
-            - all_categories: 所有可选分类
+            分类结果字典
         """
         if not text or not text.strip():
             return {
@@ -357,17 +306,14 @@ class OllamaClient:
         if len(text) > max_text_length:
             text = text[:max_text_length] + "..."
 
-        # 构建系统prompt（固定部分，可被缓存）
         categories_text = "、".join(categories)
         system_prompt = f"""你是一个文本分类助手。请根据给定的分类列表，为文本选择最合适的分类。
 可选分类：{categories_text}
 
 请直接回答分类名称，不需要解释。"""
 
-        # 用户消息（变化部分）
         user_message = f"请对以下文本进行分类：\n\n{text}"
 
-        # 使用chat接口调用，系统prompt可被缓存
         result = self._call_chat_api(system_prompt, user_message)
         response_text = result.get("response", "").strip()
 
@@ -386,15 +332,15 @@ class OllamaClient:
             "reasoning": reasoning,
             "all_categories": categories
         }
-    
+
     def classify_text_batch(self, texts: List[str], categories: List[str] = None, category_descriptions: Dict[str, str] = None) -> List[Dict[str, Any]]:
         """批量对文本进行分类
-        
+
         Args:
             texts: 待分类的文本列表
             categories: 可选的分类列表
             category_descriptions: 可选的分类描述字典
-            
+
         Returns:
             分类结果列表
         """
@@ -413,19 +359,19 @@ class OllamaClient:
                     "success": False
                 }
             results.append(result)
-            
+
             if (i + 1) % 10 == 0:
                 print(f"[OllamaClient] 已处理 {i + 1}/{len(texts)} 条文本")
-        
+
         return results
-    
+
     def classify_image_batch(self, image_paths: List[str], categories: List[str] = None) -> List[Dict[str, Any]]:
         """批量对图片进行分类
-        
+
         Args:
             image_paths: 图片文件路径列表
             categories: 可选的分类列表
-            
+
         Returns:
             分类结果列表
         """
@@ -443,16 +389,14 @@ class OllamaClient:
                     "success": False
                 }
             results.append(result)
-            
+
             if (i + 1) % 10 == 0:
                 print(f"[OllamaClient] 已处理 {i + 1}/{len(image_paths)} 张图片")
-        
+
         return results
-    
+
     def extract_text_from_image(self, image_path: str) -> str:
         """从图片中提取文字内容描述
-
-        使用chat接口分离系统prompt，支持prompt缓存优化。
 
         Args:
             image_path: 图片文件路径
@@ -465,21 +409,16 @@ class OllamaClient:
 
         image_base64 = self._encode_image_to_base64(image_path)
 
-        # 系统prompt（固定部分，可被缓存）
         system_prompt = """你是一个OCR助手。请识别图片中的文字内容并输出。
 如果图片中没有文字，请描述图片的主要内容。"""
 
-        # 用户消息
         user_message = "请识别并提取这张图片中的所有文字内容，直接输出文字内容，不需要额外说明。"
 
-        # 使用chat接口调用
         result = self._call_chat_api(system_prompt, user_message, images=[image_base64])
         return result.get("response", "").strip()
 
     def generate_category_info(self, category_name: str) -> Dict[str, Any]:
         """为类别生成描述和关键词
-
-        使用LLM基于类别名称生成合适的描述和关键词列表。
 
         Args:
             category_name: 类别名称
@@ -503,8 +442,6 @@ class OllamaClient:
             result = self._call_chat_api(system_prompt, user_message)
             response_text = result.get("response", "").strip()
 
-            # 解析JSON响应
-            import json
             json_start = response_text.find('{')
             json_end = response_text.rfind('}') + 1
 
@@ -518,7 +455,6 @@ class OllamaClient:
         except Exception as e:
             print(f"[OllamaClient] 生成类别信息失败: {e}")
 
-        # 返回默认值
         return {
             "description": f"{category_name}相关文件",
             "keywords": []
@@ -555,24 +491,17 @@ class OllamaClient:
     def analyze_image_content(self, image_path: str) -> Dict[str, Any]:
         """综合分析图片内容
 
-        使用chat接口分离系统prompt，支持prompt缓存优化。
-
         Args:
             image_path: 图片文件路径
 
         Returns:
-            分析结果字典，包含:
-            - description: 图片描述
-            - category: 分类
-            - text_content: 文字内容
-            - tags: 标签列表
+            分析结果字典
         """
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"图片文件不存在: {image_path}")
 
         image_base64 = self._encode_image_to_base64(image_path)
 
-        # 系统prompt（固定部分，可被缓存）
         system_prompt = """你是一个图片分析助手。请综合分析图片并提供以下信息：
 1. 描述：简要描述图片内容
 2. 分类：选择一个合适的分类（如：技术文档、商业报告、学术论文、会议演示、产品图片、新闻资讯、个人照片、风景、建筑、其他）
@@ -587,10 +516,8 @@ class OllamaClient:
     "tags": ["标签1", "标签2", "标签3"]
 }"""
 
-        # 用户消息
         user_message = "请分析这张图片。"
 
-        # 使用chat接口调用
         result = self._call_chat_api(system_prompt, user_message, images=[image_base64])
         response_text = result.get("response", "").strip()
 
@@ -618,11 +545,11 @@ _ollama_client = None
 
 def get_ollama_client(base_url: str = "http://localhost:11434", model: str = "qwen3.5:0.8b") -> OllamaClient:
     """获取Ollama客户端单例
-    
+
     Args:
         base_url: Ollama服务地址
         model: 模型名称
-        
+
     Returns:
         OllamaClient实例
     """
@@ -634,11 +561,11 @@ def get_ollama_client(base_url: str = "http://localhost:11434", model: str = "qw
 
 def generate_image_description(image_path: str, detail_level: str = "medium") -> str:
     """生成图片描述的便捷函数
-    
+
     Args:
         image_path: 图片文件路径
         detail_level: 描述详细程度
-        
+
     Returns:
         图片描述文本
     """
@@ -648,11 +575,11 @@ def generate_image_description(image_path: str, detail_level: str = "medium") ->
 
 def classify_image(image_path: str, categories: List[str] = None) -> Dict[str, Any]:
     """图片分类的便捷函数
-    
+
     Args:
         image_path: 图片文件路径
         categories: 可选的分类列表
-        
+
     Returns:
         分类结果字典
     """
@@ -662,12 +589,12 @@ def classify_image(image_path: str, categories: List[str] = None) -> Dict[str, A
 
 def classify_text(text: str, categories: List[str] = None, category_descriptions: Dict[str, str] = None) -> Dict[str, Any]:
     """文本分类的便捷函数
-    
+
     Args:
         text: 待分类的文本内容
         categories: 可选的分类列表
         category_descriptions: 可选的分类描述字典
-        
+
     Returns:
         分类结果字典
     """
@@ -677,7 +604,7 @@ def classify_text(text: str, categories: List[str] = None, category_descriptions
 
 if __name__ == "__main__":
     client = get_ollama_client()
-    
+
     print("检查Ollama服务状态...")
     if client.check_service_available():
         print("Ollama服务可用")

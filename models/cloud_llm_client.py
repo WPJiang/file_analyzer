@@ -1,13 +1,13 @@
 """云侧大模型调用客户端
 
 封装云侧大模型API调用接口，支持OpenAI兼容API格式。
+使用OpenAI官方SDK进行调用，更加稳定可靠。
 实现与OllamaClient相同的接口，支持图片描述生成和分类功能。
 """
 
 import os
 import base64
 import json
-import requests
 from typing import Optional, List, Dict, Any
 
 
@@ -19,9 +19,10 @@ class CloudLLMClient:
     - 通义千问 (Qwen)
     - DeepSeek
     - 智谱 GLM-4V
+    - vLLM部署的本地模型
     - 其他兼容OpenAI格式的服务
 
-    实现与OllamaClient相同的接口，便于无缝切换。
+    使用OpenAI官方SDK调用，更加稳定可靠。
     """
 
     _instance = None
@@ -38,7 +39,7 @@ class CloudLLMClient:
 
         # 从config或参数获取配置
         if config:
-            self.api_key = api_key or config.get('api_key', '')
+            self.api_key = api_key or config.get('api_key', 'EMPTY')
             self.base_url = (base_url or config.get('base_url', 'https://api.openai.com/v1')).rstrip('/')
             self.model = model or config.get('model', 'gpt-4o')
             self.vision_model = config.get('vision_model', self.model)
@@ -46,28 +47,48 @@ class CloudLLMClient:
             # 限制 max_tokens 最大为 32768（部分模型限制）
             self.max_tokens = min(config.get('max_tokens', 2048), 32768)
             self.temperature = config.get('temperature', 0.7)
+            self.disable_proxy = config.get('disable_proxy', False)
         else:
-            self.api_key = api_key or os.environ.get('OPENAI_API_KEY', '')
+            self.api_key = api_key or os.environ.get('OPENAI_API_KEY', 'EMPTY')
             self.base_url = (base_url or 'https://api.openai.com/v1').rstrip('/')
             self.model = model or 'gpt-4o'
             self.vision_model = self.model
             self.timeout = 120
             self.max_tokens = 2048
             self.temperature = 0.7
+            self.disable_proxy = False
 
-        # 验证必要配置
-        if not self.api_key:
-            print("[CloudLLMClient] WARNING: API密钥未配置，请设置api_key或OPENAI_API_KEY环境变量")
+        # 初始化OpenAI客户端
+        self._init_client()
 
         self._initialized = True
         print(f"[CloudLLMClient] 初始化完成，模型: {self.model}, 地址: {self.base_url}")
 
-    def _get_headers(self) -> Dict[str, str]:
-        """获取API请求头"""
-        return {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
-        }
+    def _init_client(self):
+        """初始化OpenAI客户端"""
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise ImportError("请安装openai库: pip install openai")
+
+        # 如果配置了禁用代理，设置环境变量
+        if self.disable_proxy:
+            # 解析base_url获取主机地址
+            from urllib.parse import urlparse
+            parsed = urlparse(self.base_url)
+            host = parsed.netloc
+
+            os.environ["NO_PROXY"] = f"{host},localhost,127.0.0.1"
+            os.environ["HTTP_PROXY"] = ""
+            os.environ["HTTPS_PROXY"] = ""
+            print(f"[CloudLLMClient] 已禁用代理，直连: {host}")
+
+        # 创建OpenAI客户端
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=self.timeout,
+        )
 
     def _encode_image_to_base64(self, image_path: str) -> str:
         """将图片编码为base64字符串
@@ -107,8 +128,6 @@ class CloudLLMClient:
         Returns:
             API响应字典
         """
-        url = f"{self.base_url}/chat/completions"
-
         messages = []
 
         # 添加系统prompt
@@ -137,40 +156,22 @@ class CloudLLMClient:
                 "content": user_message
             })
 
-        payload = {
-            "model": self.vision_model if images else self.model,
-            "messages": messages,
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature
-        }
-
         try:
-            response = requests.post(
-                url,
-                headers=self._get_headers(),
-                json=payload,
-                timeout=self.timeout
+            # 使用OpenAI客户端调用
+            response = self.client.chat.completions.create(
+                model=self.vision_model if images else self.model,
+                messages=messages,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature
             )
-            response.raise_for_status()
 
-            result = response.json()
-            if "choices" in result and len(result["choices"]) > 0:
-                content = result["choices"][0].get("message", {}).get("content", "")
+            # 提取响应内容
+            if response.choices and len(response.choices) > 0:
+                content = response.choices[0].message.content or ""
                 return {"response": content}
             return {"response": ""}
 
-        except requests.exceptions.ConnectionError:
-            raise ConnectionError(f"无法连接到云侧API服务: {self.base_url}")
-        except requests.exceptions.Timeout:
-            raise TimeoutError(f"云侧API调用超时，超时时间: {self.timeout}秒")
-        except requests.exceptions.HTTPError as e:
-            error_detail = ""
-            try:
-                error_detail = response.json()
-            except:
-                pass
-            raise RuntimeError(f"云侧API调用失败: {str(e)}, 详情: {error_detail}")
-        except requests.exceptions.RequestException as e:
+        except Exception as e:
             raise RuntimeError(f"云侧API调用失败: {str(e)}")
 
     def check_service_available(self) -> bool:
@@ -179,19 +180,16 @@ class CloudLLMClient:
         Returns:
             服务是否可用
         """
-        if not self.api_key:
-            return False
-
         try:
             # 发送简单请求测试连接
-            url = f"{self.base_url}/models"
-            response = requests.get(
-                url,
-                headers=self._get_headers(),
-                timeout=10
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=10
             )
-            return response.status_code == 200
-        except:
+            return True
+        except Exception as e:
+            print(f"[CloudLLMClient] 服务不可用: {e}")
             return False
 
     def list_models(self) -> List[str]:
@@ -200,20 +198,11 @@ class CloudLLMClient:
         Returns:
             模型名称列表
         """
-        if not self.api_key:
-            return []
-
         try:
-            url = f"{self.base_url}/models"
-            response = requests.get(
-                url,
-                headers=self._get_headers(),
-                timeout=10
-            )
-            response.raise_for_status()
-            data = response.json()
-            return [model["id"] for model in data.get("data", [])]
-        except:
+            models = self.client.models.list()
+            return [model.id for model in models.data]
+        except Exception as e:
+            print(f"[CloudLLMClient] 获取模型列表失败: {e}")
             return []
 
     def generate_text(self, prompt: str) -> str:

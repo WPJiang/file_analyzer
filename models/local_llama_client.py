@@ -1,13 +1,12 @@
 """本地llama.cpp服务器调用客户端
 
 封装本地llama.cpp服务器(通过llama-server.exe启动)的API调用接口，
-使用OpenAI兼容API格式，支持文本生成和分类功能。
+使用OpenAI SDK调用，更加稳定可靠。
 """
 
 import os
 import base64
 import json
-import requests
 from typing import Optional, List, Dict, Any
 
 
@@ -17,7 +16,7 @@ class LocalLlamaClient:
     通过llama-server.exe启动的本地服务，使用OpenAI兼容API格式。
     例如: ./llama-server.exe -m model.gguf -c 2048 --host 0.0.0.0 --port 11435
 
-    实现与OllamaClient/CloudLLMClient相同的接口，便于无缝切换。
+    使用OpenAI SDK调用，更加稳定可靠。
     """
 
     _instance = None
@@ -46,24 +45,32 @@ class LocalLlamaClient:
             self.max_tokens = 8192
             self.temperature = 0.7
 
+        # 初始化OpenAI客户端
+        self._init_client()
+
         self._initialized = True
         print(f"[LocalLlamaClient] 初始化完成，模型: {self.model}, 地址: {self.base_url}")
 
-    def _get_headers(self) -> Dict[str, str]:
-        """获取API请求头
+    def _init_client(self):
+        """初始化OpenAI客户端"""
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise ImportError("请安装openai库: pip install openai")
 
-        本地llama.cpp服务器通常不需要API密钥
-        """
-        return {
-            "Content-Type": "application/json"
-        }
+        # 创建OpenAI客户端
+        self.client = OpenAI(
+            api_key="EMPTY",  # 本地服务不需要API密钥
+            base_url=self.base_url,
+            timeout=self.timeout,
+        )
 
-    def _encode_image_to_base64(self, image_path: str, include_data_uri: bool = False) -> str:
+    def _encode_image_to_base64(self, image_path: str, include_data_uri: bool = True) -> str:
         """将图片编码为base64字符串
 
         Args:
             image_path: 图片文件路径
-            include_data_uri: 是否包含data URI前缀（llama.cpp通常不需要）
+            include_data_uri: 是否包含data URI前缀
 
         Returns:
             base64编码的图片字符串
@@ -90,23 +97,19 @@ class LocalLlamaClient:
         if include_data_uri:
             return f"data:{mime_type};base64,{base64_data}"
         else:
-            # llama.cpp通常只需要纯base64
             return base64_data
 
-    def _call_chat_api(self, system_prompt: str, user_message: str, images: List[str] = None, stream: bool = False) -> Dict[str, Any]:
+    def _call_chat_api(self, system_prompt: str, user_message: str, images: List[str] = None) -> Dict[str, Any]:
         """调用Chat API
 
         Args:
             system_prompt: 系统提示词
             user_message: 用户消息
-            images: base64编码的图片列表（纯base64，不含data URI前缀）
-            stream: 是否流式输出
+            images: base64编码的图片列表
 
         Returns:
             API响应字典
         """
-        url = f"{self.base_url}/chat/completions"
-
         messages = []
 
         # 添加系统prompt
@@ -118,7 +121,7 @@ class LocalLlamaClient:
 
         # 添加用户消息
         if images:
-            # llama.cpp多模态格式 - 使用content数组
+            # 多模态消息格式
             content = [{"type": "text", "text": user_message}]
             for image_data in images:
                 # 检查是否已经是完整的data URI格式
@@ -141,68 +144,35 @@ class LocalLlamaClient:
                 "content": user_message
             })
 
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-            "stream": stream
-        }
-
         try:
-            response = requests.post(
-                url,
-                headers=self._get_headers(),
-                json=payload,
-                timeout=self.timeout,
-                stream=stream
+            # 使用OpenAI客户端调用
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature
             )
-            response.raise_for_status()
 
-            if stream:
-                # 流式处理
-                full_content = ""
-                for line in response.iter_lines():
-                    if line:
-                        line = line.decode('utf-8')
-                        if line.startswith("data:"):
-                            chunk = line[5:].strip()
-                            if chunk != "[DONE]":
-                                try:
-                                    obj = json.loads(chunk)
-                                    delta = obj.get("choices", [{}])[0].get("delta", {})
-                                    content = delta.get("content", "")
-                                    full_content += content
-                                except json.JSONDecodeError:
-                                    continue
-                return {"response": full_content}
-            else:
-                result = response.json()
-                if "choices" in result and len(result["choices"]) > 0:
-                    message = result["choices"][0].get("message", {})
-                    content = message.get("content", "")
-                    # Qwen3.5等模型可能使用reasoning_content字段（思考链模式）
-                    reasoning_content = message.get("reasoning_content", "")
-                    return {
-                        "response": content if content else reasoning_content,
-                        "content": content,
-                        "reasoning_content": reasoning_content
-                    }
-                return {"response": ""}
+            # 提取响应内容
+            if response.choices and len(response.choices) > 0:
+                message = response.choices[0].message
+                content = message.content or ""
 
-        except requests.exceptions.ConnectionError:
-            raise ConnectionError(f"无法连接到本地llama服务: {self.base_url}")
-        except requests.exceptions.Timeout:
-            raise TimeoutError(f"本地llama API调用超时，超时时间: {self.timeout}秒")
-        except requests.exceptions.HTTPError as e:
-            error_detail = ""
-            try:
-                error_detail = response.json()
-            except:
-                pass
+                # 尝试获取reasoning_content（思考链模式）
+                reasoning_content = ""
+                if hasattr(message, 'reasoning_content') and message.reasoning_content:
+                    reasoning_content = message.reasoning_content
 
-            # 检查是否是图片不支持的错误，提供详细提示
-            error_msg = str(error_detail) if error_detail else str(e)
+                return {
+                    "response": content if content else reasoning_content,
+                    "content": content,
+                    "reasoning_content": reasoning_content
+                }
+            return {"response": ""}
+
+        except Exception as e:
+            error_msg = str(e)
+            # 检查是否是图片不支持的错误
             if 'image input is not supported' in error_msg or 'mmproj' in error_msg:
                 raise RuntimeError(
                     f"llama.cpp服务器不支持图片输入。\n\n"
@@ -214,9 +184,7 @@ class LocalLlamaClient:
                     f"  3. 启动时指定--mmproj参数\n\n"
                     f"原始错误: {error_msg}"
                 )
-            raise RuntimeError(f"本地llama API调用失败: {str(e)}, 详情: {error_detail}")
-        except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"本地llama API调用失败: {str(e)}")
+            raise RuntimeError(f"本地llama API调用失败: {error_msg}")
 
     def check_service_available(self) -> bool:
         """检查本地llama服务是否可用
@@ -225,23 +193,16 @@ class LocalLlamaClient:
             服务是否可用
         """
         try:
-            # 尝试获取模型列表或发送简单请求测试连接
-            url = f"{self.base_url}/models"
-            response = requests.get(url, timeout=5)
-            return response.status_code == 200
-        except:
-            # 如果/models端点不存在，尝试简单聊天请求
-            try:
-                url = f"{self.base_url}/chat/completions"
-                payload = {
-                    "model": self.model,
-                    "messages": [{"role": "user", "content": "hi"}],
-                    "max_tokens": 5
-                }
-                response = requests.post(url, json=payload, timeout=10)
-                return response.status_code == 200
-            except:
-                return False
+            # 发送简单聊天请求测试连接
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=5
+            )
+            return True
+        except Exception as e:
+            print(f"[LocalLlamaClient] 服务不可用: {e}")
+            return False
 
     def list_models(self) -> List[str]:
         """列出可用的模型
@@ -250,15 +211,11 @@ class LocalLlamaClient:
             模型名称列表
         """
         try:
-            url = f"{self.base_url}/models"
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                return [model.get("id", self.model) for model in data.get("data", [])]
-        except:
-            pass
-        # 如果无法获取模型列表，返回当前配置的模型
-        return [self.model]
+            models = self.client.models.list()
+            return [model.id for model in models.data]
+        except Exception as e:
+            print(f"[LocalLlamaClient] 获取模型列表失败: {e}")
+            return [self.model]
 
     def generate_text(self, prompt: str) -> str:
         """生成文本
