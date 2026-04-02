@@ -29,22 +29,31 @@ class OllamaClient:
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, base_url: str = "http://localhost:11434", model: str = "qwen3.5:0.8b"):
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "qwen3.5:0.8b", config: Dict = None):
         if self._initialized:
             return
 
-        # Ollama OpenAI兼容API端点
-        self.base_url = base_url.rstrip('/')
+        # 从config或参数获取配置
+        if config:
+            self.base_url = (base_url or config.get('base_url', 'http://localhost:11434')).rstrip('/')
+            self.model = model or config.get('model', 'qwen3.5:0.8b')
+            self.timeout = config.get('timeout', 120)
+            self.max_retries = config.get('max_retries', 5)
+        else:
+            # Ollama OpenAI兼容API端点
+            self.base_url = base_url.rstrip('/')
+            self.model = model
+            self.timeout = 120
+            self.max_retries = 5
+
         self.api_base = f"{self.base_url}/v1"  # OpenAI兼容端点
-        self.model = model
-        self.timeout = 120
         self.keep_alive = "10m"
 
         # 初始化OpenAI客户端
         self._init_client()
 
         self._initialized = True
-        print(f"[OllamaClient] 初始化完成，模型: {model}, 地址: {self.api_base}")
+        print(f"[OllamaClient] 初始化完成，模型: {self.model}, 地址: {self.api_base}, 最大重试次数: {self.max_retries}")
 
     def _init_client(self):
         """初始化OpenAI客户端"""
@@ -126,22 +135,38 @@ class OllamaClient:
                 "content": user_message
             })
 
-        try:
-            # 使用OpenAI客户端调用
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=0.7
-            )
+        # 重试机制
+        for attempt in range(self.max_retries):
+            try:
+                # 使用OpenAI客户端调用
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=0.7
+                )
 
-            # 提取响应内容
-            if response.choices and len(response.choices) > 0:
-                content = response.choices[0].message.content or ""
-                return {"response": content}
-            return {"response": ""}
+                # 提取响应内容
+                if response.choices and len(response.choices) > 0:
+                    content = response.choices[0].message.content or ""
+                    return {"response": content}
+                return {"response": ""}
 
-        except Exception as e:
-            raise RuntimeError(f"Ollama API调用失败: {str(e)}")
+            except Exception as e:
+                error_msg = str(e)
+                # 检查是否是超时错误
+                is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower()
+
+                if attempt < self.max_retries - 1:
+                    wait_time = 2 ** attempt  # 指数退避：1, 2, 4, 8, 16秒
+                    if is_timeout:
+                        print(f"[OllamaClient] API调用超时 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                    else:
+                        print(f"[OllamaClient] API调用失败: {error_msg} (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                    import time
+                    time.sleep(wait_time)
+                else:
+                    # 最后一次尝试失败，抛出异常
+                    raise RuntimeError(f"Ollama API调用失败 (已重试{self.max_retries}次): {error_msg}")
 
     def check_service_available(self) -> bool:
         """检查Ollama服务是否可用
@@ -543,19 +568,20 @@ class OllamaClient:
 _ollama_client = None
 
 
-def get_ollama_client(base_url: str = "http://localhost:11434", model: str = "qwen3.5:0.8b") -> OllamaClient:
+def get_ollama_client(base_url: str = "http://localhost:11434", model: str = "qwen3.5:0.8b", config: Dict = None) -> OllamaClient:
     """获取Ollama客户端单例
 
     Args:
         base_url: Ollama服务地址
         model: 模型名称
+        config: 配置字典
 
     Returns:
         OllamaClient实例
     """
     global _ollama_client
     if _ollama_client is None:
-        _ollama_client = OllamaClient(base_url, model)
+        _ollama_client = OllamaClient(base_url, model, config)
     return _ollama_client
 
 

@@ -48,6 +48,7 @@ class CloudLLMClient:
             self.max_tokens = min(config.get('max_tokens', 2048), 32768)
             self.temperature = config.get('temperature', 0.7)
             self.disable_proxy = config.get('disable_proxy', False)
+            self.max_retries = config.get('max_retries', 5)
         else:
             self.api_key = api_key or os.environ.get('OPENAI_API_KEY', 'EMPTY')
             self.base_url = (base_url or 'https://api.openai.com/v1').rstrip('/')
@@ -57,6 +58,7 @@ class CloudLLMClient:
             self.max_tokens = 2048
             self.temperature = 0.7
             self.disable_proxy = False
+            self.max_retries = 5
 
         # 初始化OpenAI客户端
         self._init_client()
@@ -156,23 +158,39 @@ class CloudLLMClient:
                 "content": user_message
             })
 
-        try:
-            # 使用OpenAI客户端调用
-            response = self.client.chat.completions.create(
-                model=self.vision_model if images else self.model,
-                messages=messages,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature
-            )
+        # 重试机制
+        for attempt in range(self.max_retries):
+            try:
+                # 使用OpenAI客户端调用
+                response = self.client.chat.completions.create(
+                    model=self.vision_model if images else self.model,
+                    messages=messages,
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature
+                )
 
-            # 提取响应内容
-            if response.choices and len(response.choices) > 0:
-                content = response.choices[0].message.content or ""
-                return {"response": content}
-            return {"response": ""}
+                # 提取响应内容
+                if response.choices and len(response.choices) > 0:
+                    content = response.choices[0].message.content or ""
+                    return {"response": content}
+                return {"response": ""}
 
-        except Exception as e:
-            raise RuntimeError(f"云侧API调用失败: {str(e)}")
+            except Exception as e:
+                error_msg = str(e)
+                # 检查是否是超时错误
+                is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower()
+
+                if attempt < self.max_retries - 1:
+                    wait_time = 2 ** attempt  # 指数退避：1, 2, 4, 8, 16秒
+                    if is_timeout:
+                        print(f"[CloudLLMClient] API调用超时 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                    else:
+                        print(f"[CloudLLMClient] API调用失败: {error_msg} (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                    import time
+                    time.sleep(wait_time)
+                else:
+                    # 最后一次尝试失败，抛出异常
+                    raise RuntimeError(f"云侧API调用失败 (已重试{self.max_retries}次): {error_msg}")
 
     def check_service_available(self) -> bool:
         """检查云侧API服务是否可用

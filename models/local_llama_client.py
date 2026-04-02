@@ -38,18 +38,20 @@ class LocalLlamaClient:
             self.timeout = config.get('timeout', 300)
             self.max_tokens = config.get('max_tokens', 8192)
             self.temperature = config.get('temperature', 0.7)
+            self.max_retries = config.get('max_retries', 5)
         else:
             self.base_url = (base_url or 'http://127.0.0.1:11435/v1').rstrip('/')
             self.model = model or 'qwen3.5-0.8b'
             self.timeout = 300
             self.max_tokens = 8192
             self.temperature = 0.7
+            self.max_retries = 5
 
         # 初始化OpenAI客户端
         self._init_client()
 
         self._initialized = True
-        print(f"[LocalLlamaClient] 初始化完成，模型: {self.model}, 地址: {self.base_url}")
+        print(f"[LocalLlamaClient] 初始化完成，模型: {self.model}, 地址: {self.base_url}, 最大重试次数: {self.max_retries}")
 
     def _init_client(self):
         """初始化OpenAI客户端"""
@@ -144,47 +146,63 @@ class LocalLlamaClient:
                 "content": user_message
             })
 
-        try:
-            # 使用OpenAI客户端调用
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature
-            )
-
-            # 提取响应内容
-            if response.choices and len(response.choices) > 0:
-                message = response.choices[0].message
-                content = message.content or ""
-
-                # 尝试获取reasoning_content（思考链模式）
-                reasoning_content = ""
-                if hasattr(message, 'reasoning_content') and message.reasoning_content:
-                    reasoning_content = message.reasoning_content
-
-                return {
-                    "response": content if content else reasoning_content,
-                    "content": content,
-                    "reasoning_content": reasoning_content
-                }
-            return {"response": ""}
-
-        except Exception as e:
-            error_msg = str(e)
-            # 检查是否是图片不支持的错误
-            if 'image input is not supported' in error_msg or 'mmproj' in error_msg:
-                raise RuntimeError(
-                    f"llama.cpp服务器不支持图片输入。\n\n"
-                    f"要启用多模态支持，请在启动llama-server时添加--mmproj参数：\n"
-                    f"  llama-server.exe -m model.gguf --mmproj mmproj.gguf --port 11435\n\n"
-                    f"请确保：\n"
-                    f"  1. 使用支持视觉的模型（如Qwen-VL、LLaVA等）\n"
-                    f"  2. 下载对应的mmproj模型文件\n"
-                    f"  3. 启动时指定--mmproj参数\n\n"
-                    f"原始错误: {error_msg}"
+        # 重试机制
+        for attempt in range(self.max_retries):
+            try:
+                # 使用OpenAI客户端调用
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature
                 )
-            raise RuntimeError(f"本地llama API调用失败: {error_msg}")
+
+                # 提取响应内容
+                if response.choices and len(response.choices) > 0:
+                    message = response.choices[0].message
+                    content = message.content or ""
+
+                    # 尝试获取reasoning_content（思考链模式）
+                    reasoning_content = ""
+                    if hasattr(message, 'reasoning_content') and message.reasoning_content:
+                        reasoning_content = message.reasoning_content
+
+                    return {
+                        "response": content if content else reasoning_content,
+                        "content": content,
+                        "reasoning_content": reasoning_content
+                    }
+                return {"response": ""}
+
+            except Exception as e:
+                error_msg = str(e)
+                # 检查是否是超时错误
+                is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower()
+
+                # 检查是否是图片不支持的错误（这类错误不应重试）
+                if 'image input is not supported' in error_msg or 'mmproj' in error_msg:
+                    raise RuntimeError(
+                        f"llama.cpp服务器不支持图片输入。\n\n"
+                        f"要启用多模态支持，请在启动llama-server时添加--mmproj参数：\n"
+                        f"  llama-server.exe -m model.gguf --mmproj mmproj.gguf --port 11435\n\n"
+                        f"请确保：\n"
+                        f"  1. 使用支持视觉的模型（如Qwen-VL、LLaVA等）\n"
+                        f"  2. 下载对应的mmproj模型文件\n"
+                        f"  3. 启动时指定--mmproj参数\n\n"
+                        f"原始错误: {error_msg}"
+                    )
+
+                if attempt < self.max_retries - 1:
+                    wait_time = 2 ** attempt  # 指数退避：1, 2, 4, 8, 16秒
+                    if is_timeout:
+                        print(f"[LocalLlamaClient] API调用超时 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                    else:
+                        print(f"[LocalLlamaClient] API调用失败: {error_msg} (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                    import time
+                    time.sleep(wait_time)
+                else:
+                    # 最后一次尝试失败，抛出异常
+                    raise RuntimeError(f"本地llama API调用失败 (已重试{self.max_retries}次): {error_msg}")
 
     def check_service_available(self) -> bool:
         """检查本地llama服务是否可用

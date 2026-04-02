@@ -546,11 +546,17 @@ class ModelManager:
         try:
             from models.ollama_client import OllamaClient
 
-            base_url = ollama_config.get('base_url', 'http://localhost:11434')
-            model = ollama_config.get('model', 'qwen3.5:0.8b')
+            # 获取全局max_retries配置
+            config = self._load_config()
+            llm_config = config.get('llm', {})
+            max_retries = llm_config.get('max_retries', 5)
 
-            self._llm_client = OllamaClient(base_url, model)
-            print(f"[ModelManager] Ollama客户端初始化完成，模型: {model}")
+            # 合并配置
+            full_config = ollama_config.copy()
+            full_config['max_retries'] = max_retries
+
+            self._llm_client = OllamaClient(config=full_config)
+            print(f"[ModelManager] Ollama客户端初始化完成，模型: {full_config.get('model', 'qwen3.5:0.8b')}")
 
         except ImportError as e:
             print(f"[ModelManager] WARNING: 无法导入OllamaClient: {e}")
@@ -567,6 +573,11 @@ class ModelManager:
         try:
             from models.cloud_llm_client import CloudLLMClient
             import json
+
+            # 获取全局max_retries配置
+            config = self._load_config()
+            llm_config = config.get('llm', {})
+            max_retries = llm_config.get('max_retries', 5)
 
             # 获取 api_config.json 文件路径
             config_file = cloud_config.get('config_file', 'api_config.json')
@@ -585,6 +596,9 @@ class ModelManager:
                 print(f"[ModelManager] WARNING: 云侧API配置文件不存在: {api_config_path}")
                 print(f"[ModelManager] 请复制 api_config_example.json 并重命名为 {config_file}，然后填入实际的API密钥")
 
+            # 合并max_retries配置
+            api_config['max_retries'] = max_retries
+
             self._llm_client = CloudLLMClient(config=api_config)
             print(f"[ModelManager] 云侧LLM客户端初始化完成，模型: {api_config.get('model', 'default')}")
 
@@ -600,7 +614,16 @@ class ModelManager:
         try:
             from models.local_llama_client import LocalLlamaClient
 
-            self._llm_client = LocalLlamaClient(config=local_llama_config)
+            # 获取全局max_retries配置
+            config = self._load_config()
+            llm_config = config.get('llm', {})
+            max_retries = llm_config.get('max_retries', 5)
+
+            # 合并配置
+            full_config = local_llama_config.copy()
+            full_config['max_retries'] = max_retries
+
+            self._llm_client = LocalLlamaClient(config=full_config)
             print(f"[ModelManager] 本地llama.cpp客户端初始化完成")
 
         except ImportError as e:
