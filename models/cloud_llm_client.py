@@ -204,7 +204,7 @@ class CloudLLMClient:
 
                 content = response.choices[0].message.content
                 # 如果内容为空或None，视为失败需要重试
-                if content is None or not str(content).strip():
+                if content is None or (isinstance(content, str) and not content.strip()):
                     if attempt < self.max_retries - 1:
                         wait_time = 2 ** attempt
                         print(f"[CloudLLMClient] API返回空内容 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
@@ -214,7 +214,7 @@ class CloudLLMClient:
                         print(f"[CloudLLMClient] API返回空内容 (已重试{self.max_retries}次)")
                         return {"response": ""}
 
-                return {"response": str(content)}
+                return {"response": content if isinstance(content, str) else str(content)}
 
             except Exception as e:
                 error_msg = str(e)

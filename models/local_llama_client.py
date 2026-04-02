@@ -211,11 +211,14 @@ class LocalLlamaClient:
                 if hasattr(message, 'reasoning_content') and message.reasoning_content:
                     reasoning_content = str(message.reasoning_content)
 
+                # 判断content是否有效（非空字符串）
+                content_is_valid = content is not None and isinstance(content, str) and content.strip()
+
                 # 最终内容：优先使用content，如果为空则使用reasoning_content
-                final_content = str(content) if content is not None and str(content).strip() else reasoning_content
+                final_content = content.strip() if content_is_valid else reasoning_content.strip()
 
                 # 如果内容为空，视为失败需要重试
-                if not final_content.strip():
+                if not final_content:
                     if attempt < self.max_retries - 1:
                         wait_time = 2 ** attempt
                         print(f"[LocalLlamaClient] API返回空内容 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
@@ -227,7 +230,7 @@ class LocalLlamaClient:
 
                 return {
                     "response": final_content,
-                    "content": str(content) if content else "",
+                    "content": content if content_is_valid else "",
                     "reasoning_content": reasoning_content
                 }
 
