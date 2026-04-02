@@ -159,111 +159,58 @@ class LocalLlamaClient:
                 "content": user_message
             })
 
-        # 重试机制
-        import time
-        for attempt in range(self.max_retries):
-            try:
-                # 使用OpenAI客户端调用
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    max_tokens=self.max_tokens,
-                    temperature=self.temperature
+        try:
+            # 使用OpenAI客户端调用
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature
+            )
+
+            # 检查响应是否有效
+            if response is None:
+                return {"response": "", "content": "", "reasoning_content": ""}
+
+            # 提取响应内容
+            if not response.choices or len(response.choices) == 0:
+                return {"response": "", "content": "", "reasoning_content": ""}
+
+            message = response.choices[0].message
+            content = message.content
+
+            # 尝试获取reasoning_content（思考链模式）
+            reasoning_content = ""
+            if hasattr(message, 'reasoning_content') and message.reasoning_content:
+                reasoning_content = str(message.reasoning_content)
+
+            # 判断content是否有效（非空字符串）
+            content_is_valid = content is not None and isinstance(content, str) and content.strip()
+
+            # 最终内容：优先使用content，如果为空则使用reasoning_content
+            final_content = content.strip() if content_is_valid else reasoning_content.strip()
+
+            return {
+                "response": final_content,
+                "content": content if content_is_valid else "",
+                "reasoning_content": reasoning_content
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            # 检查是否是图片不支持的错误
+            if 'image input is not supported' in error_msg or 'mmproj' in error_msg:
+                raise RuntimeError(
+                    f"llama.cpp服务器不支持图片输入。\n\n"
+                    f"要启用多模态支持，请在启动llama-server时添加--mmproj参数：\n"
+                    f"  llama-server.exe -m model.gguf --mmproj mmproj.gguf --port 11435\n\n"
+                    f"请确保：\n"
+                    f"  1. 使用支持视觉的模型（如Qwen-VL、LLaVA等）\n"
+                    f"  2. 下载对应的mmproj模型文件\n"
+                    f"  3. 启动时指定--mmproj参数\n\n"
+                    f"原始错误: {error_msg}"
                 )
-
-                # 检查响应是否有效
-                if response is None:
-                    if attempt < self.max_retries - 1:
-                        wait_time = 2 ** attempt
-                        print(f"[LocalLlamaClient] API返回None (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        print(f"[LocalLlamaClient] API返回None (已重试{self.max_retries}次)")
-                        return {"response": ""}
-
-                # 提取响应内容
-                if not response.choices:
-                    if attempt < self.max_retries - 1:
-                        wait_time = 2 ** attempt
-                        print(f"[LocalLlamaClient] API返回空choices (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        print(f"[LocalLlamaClient] API返回空choices (已重试{self.max_retries}次)")
-                        return {"response": ""}
-
-                if len(response.choices) == 0:
-                    if attempt < self.max_retries - 1:
-                        wait_time = 2 ** attempt
-                        print(f"[LocalLlamaClient] API返回choices长度为0 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        print(f"[LocalLlamaClient] API返回choices长度为0 (已重试{self.max_retries}次)")
-                        return {"response": ""}
-
-                message = response.choices[0].message
-                content = message.content
-
-                # 尝试获取reasoning_content（思考链模式）
-                reasoning_content = ""
-                if hasattr(message, 'reasoning_content') and message.reasoning_content:
-                    reasoning_content = str(message.reasoning_content)
-
-                # 判断content是否有效（非空字符串）
-                content_is_valid = content is not None and isinstance(content, str) and content.strip()
-
-                # 最终内容：优先使用content，如果为空则使用reasoning_content
-                final_content = content.strip() if content_is_valid else reasoning_content.strip()
-
-                # 如果内容为空，视为失败需要重试
-                if not final_content:
-                    if attempt < self.max_retries - 1:
-                        wait_time = 2 ** attempt
-                        print(f"[LocalLlamaClient] API返回空内容 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        print(f"[LocalLlamaClient] API返回空内容 (已重试{self.max_retries}次)")
-                        return {"response": "", "content": "", "reasoning_content": ""}
-
-                return {
-                    "response": final_content,
-                    "content": content if content_is_valid else "",
-                    "reasoning_content": reasoning_content
-                }
-
-            except Exception as e:
-                error_msg = str(e)
-                # 检查是否是超时错误
-                is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower()
-
-                # 检查是否是图片不支持的错误（这类错误不应重试）
-                if 'image input is not supported' in error_msg or 'mmproj' in error_msg:
-                    raise RuntimeError(
-                        f"llama.cpp服务器不支持图片输入。\n\n"
-                        f"要启用多模态支持，请在启动llama-server时添加--mmproj参数：\n"
-                        f"  llama-server.exe -m model.gguf --mmproj mmproj.gguf --port 11435\n\n"
-                        f"请确保：\n"
-                        f"  1. 使用支持视觉的模型（如Qwen-VL、LLaVA等）\n"
-                        f"  2. 下载对应的mmproj模型文件\n"
-                        f"  3. 启动时指定--mmproj参数\n\n"
-                        f"原始错误: {error_msg}"
-                    )
-
-                if attempt < self.max_retries - 1:
-                    wait_time = 2 ** attempt  # 指数退避：1, 2, 4, 8, 16秒
-                    if is_timeout:
-                        print(f"[LocalLlamaClient] API调用超时 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                    else:
-                        print(f"[LocalLlamaClient] API调用失败: {error_msg} (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                    time.sleep(wait_time)
-                else:
-                    # 最后一次尝试失败，抛出异常
-                    raise RuntimeError(f"本地llama API调用失败 (已重试{self.max_retries}次): {error_msg}")
-
-        return {"response": ""}
+            raise RuntimeError(f"本地llama API调用失败: {error_msg}")
 
     def check_service_available(self) -> bool:
         """检查本地llama服务是否可用
@@ -559,22 +506,69 @@ class LocalLlamaClient:
 
         user_message = f"请为类别 '{category_name}' 生成描述和关键词。"
 
-        try:
-            result = self._call_chat_api(system_prompt, user_message)
-            response_text = result.get("response", "").strip()
+        import time
+        for attempt in range(self.max_retries):
+            try:
+                result = self._call_chat_api(system_prompt, user_message)
+                response_text = result.get("response", "").strip()
 
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
+                # 检查响应是否为空
+                if not response_text:
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[LocalLlamaClient] 生成类别信息返回为空 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[LocalLlamaClient] 生成类别信息返回为空 (已重试{self.max_retries}次)")
+                        return {"description": f"{category_name}相关文件", "keywords": []}
 
-            if json_start != -1 and json_end > json_start:
-                json_str = response_text[json_start:json_end]
-                parsed = json.loads(json_str)
-                return {
-                    "description": parsed.get("description", f"{category_name}相关文件"),
-                    "keywords": parsed.get("keywords", [])
-                }
-        except Exception as e:
-            print(f"[LocalLlamaClient] 生成类别信息失败: {e}")
+                json_start = response_text.find('{')
+                json_end = response_text.rfind('}') + 1
+
+                if json_start != -1 and json_end > json_start:
+                    json_str = response_text[json_start:json_end]
+                    parsed = json.loads(json_str)
+
+                    description = parsed.get("description", "")
+                    keywords = parsed.get("keywords", [])
+
+                    # 检查description和keywords是否为空
+                    if not description or not keywords:
+                        if attempt < self.max_retries - 1:
+                            wait_time = 2 ** attempt
+                            print(f"[LocalLlamaClient] 生成类别信息字段为空 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            print(f"[LocalLlamaClient] 生成类别信息字段为空 (已重试{self.max_retries}次)")
+                            return {
+                                "description": description or f"{category_name}相关文件",
+                                "keywords": keywords or []
+                            }
+
+                    return {
+                        "description": description,
+                        "keywords": keywords
+                    }
+                else:
+                    # JSON解析失败
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[LocalLlamaClient] 生成类别信息JSON解析失败 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[LocalLlamaClient] 生成类别信息JSON解析失败 (已重试{self.max_retries}次)")
+
+            except Exception as e:
+                if attempt < self.max_retries - 1:
+                    wait_time = 2 ** attempt
+                    print(f"[LocalLlamaClient] 生成类别信息失败: {e} (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    print(f"[LocalLlamaClient] 生成类别信息失败 (已重试{self.max_retries}次): {e}")
 
         return {
             "description": f"{category_name}相关文件",

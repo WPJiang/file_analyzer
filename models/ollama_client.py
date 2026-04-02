@@ -148,80 +148,30 @@ class OllamaClient:
                 "content": user_message
             })
 
-        # 重试机制
-        import time
-        for attempt in range(self.max_retries):
-            try:
-                # 使用OpenAI客户端调用
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=0.7
-                )
+        try:
+            # 使用OpenAI客户端调用
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=0.7
+            )
 
-                # 检查响应是否有效
-                if response is None:
-                    if attempt < self.max_retries - 1:
-                        wait_time = 2 ** attempt
-                        print(f"[OllamaClient] API返回None (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        print(f"[OllamaClient] API返回None (已重试{self.max_retries}次)")
-                        return {"response": ""}
+            # 检查响应是否有效
+            if response is None:
+                return {"response": ""}
 
-                # 提取响应内容
-                if not response.choices:
-                    if attempt < self.max_retries - 1:
-                        wait_time = 2 ** attempt
-                        print(f"[OllamaClient] API返回空choices (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        print(f"[OllamaClient] API返回空choices (已重试{self.max_retries}次)")
-                        return {"response": ""}
+            # 提取响应内容
+            if not response.choices or len(response.choices) == 0:
+                return {"response": ""}
 
-                if len(response.choices) == 0:
-                    if attempt < self.max_retries - 1:
-                        wait_time = 2 ** attempt
-                        print(f"[OllamaClient] API返回choices长度为0 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        print(f"[OllamaClient] API返回choices长度为0 (已重试{self.max_retries}次)")
-                        return {"response": ""}
+            content = response.choices[0].message.content
+            if content is None or (isinstance(content, str) and not content.strip()):
+                return {"response": ""}
 
-                content = response.choices[0].message.content
-                # 如果内容为空或None，视为失败需要重试
-                if content is None or (isinstance(content, str) and not content.strip()):
-                    if attempt < self.max_retries - 1:
-                        wait_time = 2 ** attempt
-                        print(f"[OllamaClient] API返回空内容 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        print(f"[OllamaClient] API返回空内容 (已重试{self.max_retries}次)")
-                        return {"response": ""}
+            return {"response": content if isinstance(content, str) else str(content)}
 
-                return {"response": content if isinstance(content, str) else str(content)}
-
-            except Exception as e:
-                error_msg = str(e)
-                # 检查是否是超时错误
-                is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower()
-
-                if attempt < self.max_retries - 1:
-                    wait_time = 2 ** attempt  # 指数退避：1, 2, 4, 8, 16秒
-                    if is_timeout:
-                        print(f"[OllamaClient] API调用超时 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                    else:
-                        print(f"[OllamaClient] API调用失败: {error_msg} (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                    time.sleep(wait_time)
-                else:
-                    # 最后一次尝试失败，抛出异常
-                    raise RuntimeError(f"Ollama API调用失败 (已重试{self.max_retries}次): {error_msg}")
-
-        return {"response": ""}
+        except Exception as e:
+            raise RuntimeError(f"Ollama API调用失败: {str(e)}")
 
     def check_service_available(self) -> bool:
         """检查Ollama服务是否可用
@@ -518,22 +468,69 @@ class OllamaClient:
 
         user_message = f"请为类别 '{category_name}' 生成描述和关键词。"
 
-        try:
-            result = self._call_chat_api(system_prompt, user_message)
-            response_text = result.get("response", "").strip()
+        import time
+        for attempt in range(self.max_retries):
+            try:
+                result = self._call_chat_api(system_prompt, user_message)
+                response_text = result.get("response", "").strip()
 
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
+                # 检查响应是否为空
+                if not response_text:
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[OllamaClient] 生成类别信息返回为空 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[OllamaClient] 生成类别信息返回为空 (已重试{self.max_retries}次)")
+                        return {"description": f"{category_name}相关文件", "keywords": []}
 
-            if json_start != -1 and json_end > json_start:
-                json_str = response_text[json_start:json_end]
-                parsed = json.loads(json_str)
-                return {
-                    "description": parsed.get("description", f"{category_name}相关文件"),
-                    "keywords": parsed.get("keywords", [])
-                }
-        except Exception as e:
-            print(f"[OllamaClient] 生成类别信息失败: {e}")
+                json_start = response_text.find('{')
+                json_end = response_text.rfind('}') + 1
+
+                if json_start != -1 and json_end > json_start:
+                    json_str = response_text[json_start:json_end]
+                    parsed = json.loads(json_str)
+
+                    description = parsed.get("description", "")
+                    keywords = parsed.get("keywords", [])
+
+                    # 检查description和keywords是否为空
+                    if not description or not keywords:
+                        if attempt < self.max_retries - 1:
+                            wait_time = 2 ** attempt
+                            print(f"[OllamaClient] 生成类别信息字段为空 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            print(f"[OllamaClient] 生成类别信息字段为空 (已重试{self.max_retries}次)")
+                            return {
+                                "description": description or f"{category_name}相关文件",
+                                "keywords": keywords or []
+                            }
+
+                    return {
+                        "description": description,
+                        "keywords": keywords
+                    }
+                else:
+                    # JSON解析失败
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[OllamaClient] 生成类别信息JSON解析失败 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[OllamaClient] 生成类别信息JSON解析失败 (已重试{self.max_retries}次)")
+
+            except Exception as e:
+                if attempt < self.max_retries - 1:
+                    wait_time = 2 ** attempt
+                    print(f"[OllamaClient] 生成类别信息失败: {e} (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    print(f"[OllamaClient] 生成类别信息失败 (已重试{self.max_retries}次): {e}")
 
         return {
             "description": f"{category_name}相关文件",
