@@ -47,7 +47,7 @@ class CloudLLMClient:
             # 限制 max_tokens 最大为 32768（部分模型限制）
             self.max_tokens = min(config.get('max_tokens', 2048), 32768)
             self.temperature = config.get('temperature', 0.7)
-            self.disable_proxy = config.get('disable_proxy', False)
+            self.disable_proxy = config.get('disable_proxy', True)
             self.max_retries = config.get('max_retries', 5)
         else:
             self.api_key = api_key or os.environ.get('OPENAI_API_KEY', 'EMPTY')
@@ -57,7 +57,7 @@ class CloudLLMClient:
             self.timeout = 120
             self.max_tokens = 2048
             self.temperature = 0.7
-            self.disable_proxy = False
+            self.disable_proxy = True
             self.max_retries = 5
 
         # 初始化OpenAI客户端
@@ -170,22 +170,19 @@ class CloudLLMClient:
                     temperature=self.temperature
                 )
 
+                # 检查响应是否有效
+                if response is None:
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[CloudLLMClient] API返回None (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[CloudLLMClient] API返回None (已重试{self.max_retries}次)")
+                        return {"response": ""}
+
                 # 提取响应内容
-                if response.choices and len(response.choices) > 0:
-                    content = response.choices[0].message.content or ""
-                    # 如果内容为空，视为失败需要重试
-                    if not content.strip():
-                        if attempt < self.max_retries - 1:
-                            wait_time = 2 ** attempt
-                            print(f"[CloudLLMClient] API返回空内容 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                            time.sleep(wait_time)
-                            continue
-                        else:
-                            print(f"[CloudLLMClient] API返回空内容 (已重试{self.max_retries}次)")
-                            return {"response": ""}
-                    return {"response": content}
-                else:
-                    # response.choices为空，需要重试
+                if not response.choices:
                     if attempt < self.max_retries - 1:
                         wait_time = 2 ** attempt
                         print(f"[CloudLLMClient] API返回空choices (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
@@ -194,6 +191,30 @@ class CloudLLMClient:
                     else:
                         print(f"[CloudLLMClient] API返回空choices (已重试{self.max_retries}次)")
                         return {"response": ""}
+
+                if len(response.choices) == 0:
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[CloudLLMClient] API返回choices长度为0 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[CloudLLMClient] API返回choices长度为0 (已重试{self.max_retries}次)")
+                        return {"response": ""}
+
+                content = response.choices[0].message.content
+                # 如果内容为空或None，视为失败需要重试
+                if content is None or not str(content).strip():
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[CloudLLMClient] API返回空内容 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[CloudLLMClient] API返回空内容 (已重试{self.max_retries}次)")
+                        return {"response": ""}
+
+                return {"response": str(content)}
 
             except Exception as e:
                 error_msg = str(e)

@@ -478,7 +478,9 @@
         "description_max_retries": "API调用失败时的最大重试次数，默认为5次。使用指数退避策略（1,2,4,8,16秒）",
         "cloud": {
             "config_file": "api_config.json",
-            "description_config_file": "云侧API配置文件路径，包含api_key、base_url、model等配置。请复制api_config_example.json并重命名为api_config.json，然后填入实际的API密钥"
+            "description_config_file": "云侧API配置文件路径，包含api_key、base_url、model等配置。请复制api_config_example.json并重命名为api_config.json，然后填入实际的API密钥",
+            "disable_proxy": true,
+            "description_disable_proxy": "是否禁用代理直连云服务，默认true"
         },
         "ollama": {
             "base_url": "http://localhost:11434",
@@ -486,7 +488,9 @@
             "model": "qwen3.5:0.8b",
             "description_model": "Ollama模型名称",
             "keep_alive": "10m",
-            "description_keep_alive": "模型在内存中保持的时间，避免每次调用重新加载"
+            "description_keep_alive": "模型在内存中保持的时间，避免每次调用重新加载",
+            "disable_proxy": true,
+            "description_disable_proxy": "是否禁用代理直连本地服务，默认true"
         },
         "local_llama": {
             "base_url": "http://127.0.0.1:11435/v1",
@@ -498,7 +502,9 @@
             "max_tokens": 8192,
             "description_max_tokens": "最大生成token数",
             "temperature": 0.7,
-            "description_temperature": "生成温度，0-1之间，越高越随机"
+            "description_temperature": "生成温度，0-1之间，越高越随机",
+            "disable_proxy": true,
+            "description_disable_proxy": "是否禁用代理直连本地服务，默认true"
         }
     },
     "image_processing": {

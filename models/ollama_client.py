@@ -39,12 +39,14 @@ class OllamaClient:
             self.model = model or config.get('model', 'qwen3.5:0.8b')
             self.timeout = config.get('timeout', 120)
             self.max_retries = config.get('max_retries', 5)
+            self.disable_proxy = config.get('disable_proxy', True)
         else:
             # Ollama OpenAI兼容API端点
             self.base_url = base_url.rstrip('/')
             self.model = model
             self.timeout = 120
             self.max_retries = 5
+            self.disable_proxy = True
 
         self.api_base = f"{self.base_url}/v1"  # OpenAI兼容端点
         self.keep_alive = "10m"
@@ -61,6 +63,17 @@ class OllamaClient:
             from openai import OpenAI
         except ImportError:
             raise ImportError("请安装openai库: pip install openai")
+
+        # 如果配置了禁用代理，设置环境变量
+        if self.disable_proxy:
+            from urllib.parse import urlparse
+            parsed = urlparse(self.api_base)
+            host = parsed.netloc
+
+            os.environ["NO_PROXY"] = f"{host},localhost,127.0.0.1"
+            os.environ["HTTP_PROXY"] = ""
+            os.environ["HTTPS_PROXY"] = ""
+            print(f"[OllamaClient] 已禁用代理，直连: {host}")
 
         # 创建OpenAI客户端，指向Ollama的OpenAI兼容端点
         self.client = OpenAI(
@@ -146,22 +159,19 @@ class OllamaClient:
                     temperature=0.7
                 )
 
+                # 检查响应是否有效
+                if response is None:
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[OllamaClient] API返回None (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[OllamaClient] API返回None (已重试{self.max_retries}次)")
+                        return {"response": ""}
+
                 # 提取响应内容
-                if response.choices and len(response.choices) > 0:
-                    content = response.choices[0].message.content or ""
-                    # 如果内容为空，视为失败需要重试
-                    if not content.strip():
-                        if attempt < self.max_retries - 1:
-                            wait_time = 2 ** attempt
-                            print(f"[OllamaClient] API返回空内容 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                            time.sleep(wait_time)
-                            continue
-                        else:
-                            print(f"[OllamaClient] API返回空内容 (已重试{self.max_retries}次)")
-                            return {"response": ""}
-                    return {"response": content}
-                else:
-                    # response.choices为空，需要重试
+                if not response.choices:
                     if attempt < self.max_retries - 1:
                         wait_time = 2 ** attempt
                         print(f"[OllamaClient] API返回空choices (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
@@ -170,6 +180,30 @@ class OllamaClient:
                     else:
                         print(f"[OllamaClient] API返回空choices (已重试{self.max_retries}次)")
                         return {"response": ""}
+
+                if len(response.choices) == 0:
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[OllamaClient] API返回choices长度为0 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[OllamaClient] API返回choices长度为0 (已重试{self.max_retries}次)")
+                        return {"response": ""}
+
+                content = response.choices[0].message.content
+                # 如果内容为空或None，视为失败需要重试
+                if content is None or not str(content).strip():
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[OllamaClient] API返回空内容 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[OllamaClient] API返回空内容 (已重试{self.max_retries}次)")
+                        return {"response": ""}
+
+                return {"response": str(content)}
 
             except Exception as e:
                 error_msg = str(e)

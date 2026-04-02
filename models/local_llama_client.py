@@ -39,6 +39,7 @@ class LocalLlamaClient:
             self.max_tokens = config.get('max_tokens', 8192)
             self.temperature = config.get('temperature', 0.7)
             self.max_retries = config.get('max_retries', 5)
+            self.disable_proxy = config.get('disable_proxy', True)
         else:
             self.base_url = (base_url or 'http://127.0.0.1:11435/v1').rstrip('/')
             self.model = model or 'qwen3.5-0.8b'
@@ -46,6 +47,7 @@ class LocalLlamaClient:
             self.max_tokens = 8192
             self.temperature = 0.7
             self.max_retries = 5
+            self.disable_proxy = True
 
         # 初始化OpenAI客户端
         self._init_client()
@@ -59,6 +61,17 @@ class LocalLlamaClient:
             from openai import OpenAI
         except ImportError:
             raise ImportError("请安装openai库: pip install openai")
+
+        # 如果配置了禁用代理，设置环境变量
+        if self.disable_proxy:
+            from urllib.parse import urlparse
+            parsed = urlparse(self.base_url)
+            host = parsed.netloc
+
+            os.environ["NO_PROXY"] = f"{host},localhost,127.0.0.1"
+            os.environ["HTTP_PROXY"] = ""
+            os.environ["HTTPS_PROXY"] = ""
+            print(f"[LocalLlamaClient] 已禁用代理，直连: {host}")
 
         # 创建OpenAI客户端
         self.client = OpenAI(
@@ -158,36 +171,19 @@ class LocalLlamaClient:
                     temperature=self.temperature
                 )
 
+                # 检查响应是否有效
+                if response is None:
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[LocalLlamaClient] API返回None (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[LocalLlamaClient] API返回None (已重试{self.max_retries}次)")
+                        return {"response": ""}
+
                 # 提取响应内容
-                if response.choices and len(response.choices) > 0:
-                    message = response.choices[0].message
-                    content = message.content or ""
-
-                    # 尝试获取reasoning_content（思考链模式）
-                    reasoning_content = ""
-                    if hasattr(message, 'reasoning_content') and message.reasoning_content:
-                        reasoning_content = message.reasoning_content
-
-                    # 最终内容：优先使用content，如果为空则使用reasoning_content
-                    final_content = content if content.strip() else reasoning_content
-
-                    # 如果内容为空，视为失败需要重试
-                    if not final_content.strip():
-                        if attempt < self.max_retries - 1:
-                            wait_time = 2 ** attempt
-                            print(f"[LocalLlamaClient] API返回空内容 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                            time.sleep(wait_time)
-                            continue
-                        else:
-                            print(f"[LocalLlamaClient] API返回空内容 (已重试{self.max_retries}次)")
-                            return {"response": "", "content": "", "reasoning_content": ""}
-                    return {
-                        "response": final_content,
-                        "content": content,
-                        "reasoning_content": reasoning_content
-                    }
-                else:
-                    # response.choices为空，需要重试
+                if not response.choices:
                     if attempt < self.max_retries - 1:
                         wait_time = 2 ** attempt
                         print(f"[LocalLlamaClient] API返回空choices (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
@@ -196,6 +192,44 @@ class LocalLlamaClient:
                     else:
                         print(f"[LocalLlamaClient] API返回空choices (已重试{self.max_retries}次)")
                         return {"response": ""}
+
+                if len(response.choices) == 0:
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[LocalLlamaClient] API返回choices长度为0 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[LocalLlamaClient] API返回choices长度为0 (已重试{self.max_retries}次)")
+                        return {"response": ""}
+
+                message = response.choices[0].message
+                content = message.content
+
+                # 尝试获取reasoning_content（思考链模式）
+                reasoning_content = ""
+                if hasattr(message, 'reasoning_content') and message.reasoning_content:
+                    reasoning_content = str(message.reasoning_content)
+
+                # 最终内容：优先使用content，如果为空则使用reasoning_content
+                final_content = str(content) if content is not None and str(content).strip() else reasoning_content
+
+                # 如果内容为空，视为失败需要重试
+                if not final_content.strip():
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[LocalLlamaClient] API返回空内容 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[LocalLlamaClient] API返回空内容 (已重试{self.max_retries}次)")
+                        return {"response": "", "content": "", "reasoning_content": ""}
+
+                return {
+                    "response": final_content,
+                    "content": str(content) if content else "",
+                    "reasoning_content": reasoning_content
+                }
 
             except Exception as e:
                 error_msg = str(e)
