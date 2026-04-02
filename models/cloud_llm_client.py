@@ -159,6 +159,7 @@ class CloudLLMClient:
             })
 
         # 重试机制
+        import time
         for attempt in range(self.max_retries):
             try:
                 # 使用OpenAI客户端调用
@@ -172,8 +173,27 @@ class CloudLLMClient:
                 # 提取响应内容
                 if response.choices and len(response.choices) > 0:
                     content = response.choices[0].message.content or ""
+                    # 如果内容为空，视为失败需要重试
+                    if not content.strip():
+                        if attempt < self.max_retries - 1:
+                            wait_time = 2 ** attempt
+                            print(f"[CloudLLMClient] API返回空内容 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            print(f"[CloudLLMClient] API返回空内容 (已重试{self.max_retries}次)")
+                            return {"response": ""}
                     return {"response": content}
-                return {"response": ""}
+                else:
+                    # response.choices为空，需要重试
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[CloudLLMClient] API返回空choices (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[CloudLLMClient] API返回空choices (已重试{self.max_retries}次)")
+                        return {"response": ""}
 
             except Exception as e:
                 error_msg = str(e)
@@ -186,11 +206,12 @@ class CloudLLMClient:
                         print(f"[CloudLLMClient] API调用超时 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
                     else:
                         print(f"[CloudLLMClient] API调用失败: {error_msg} (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                    import time
                     time.sleep(wait_time)
                 else:
                     # 最后一次尝试失败，抛出异常
                     raise RuntimeError(f"云侧API调用失败 (已重试{self.max_retries}次): {error_msg}")
+
+        return {"response": ""}
 
     def check_service_available(self) -> bool:
         """检查云侧API服务是否可用

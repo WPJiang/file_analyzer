@@ -147,6 +147,7 @@ class LocalLlamaClient:
             })
 
         # 重试机制
+        import time
         for attempt in range(self.max_retries):
             try:
                 # 使用OpenAI客户端调用
@@ -167,12 +168,34 @@ class LocalLlamaClient:
                     if hasattr(message, 'reasoning_content') and message.reasoning_content:
                         reasoning_content = message.reasoning_content
 
+                    # 最终内容：优先使用content，如果为空则使用reasoning_content
+                    final_content = content if content.strip() else reasoning_content
+
+                    # 如果内容为空，视为失败需要重试
+                    if not final_content.strip():
+                        if attempt < self.max_retries - 1:
+                            wait_time = 2 ** attempt
+                            print(f"[LocalLlamaClient] API返回空内容 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            print(f"[LocalLlamaClient] API返回空内容 (已重试{self.max_retries}次)")
+                            return {"response": "", "content": "", "reasoning_content": ""}
                     return {
-                        "response": content if content else reasoning_content,
+                        "response": final_content,
                         "content": content,
                         "reasoning_content": reasoning_content
                     }
-                return {"response": ""}
+                else:
+                    # response.choices为空，需要重试
+                    if attempt < self.max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"[LocalLlamaClient] API返回空choices (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[LocalLlamaClient] API返回空choices (已重试{self.max_retries}次)")
+                        return {"response": ""}
 
             except Exception as e:
                 error_msg = str(e)
@@ -198,11 +221,12 @@ class LocalLlamaClient:
                         print(f"[LocalLlamaClient] API调用超时 (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
                     else:
                         print(f"[LocalLlamaClient] API调用失败: {error_msg} (尝试 {attempt + 1}/{self.max_retries}), {wait_time}秒后重试...")
-                    import time
                     time.sleep(wait_time)
                 else:
                     # 最后一次尝试失败，抛出异常
                     raise RuntimeError(f"本地llama API调用失败 (已重试{self.max_retries}次): {error_msg}")
+
+        return {"response": ""}
 
     def check_service_available(self) -> bool:
         """检查本地llama服务是否可用
